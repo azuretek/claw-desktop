@@ -149,6 +149,28 @@ test('resolveVersion always returns something buildable', () => {
   assert.ok(r.note && r.note.length > 3);
 });
 
+test('electron-builder is launched as a script, not as a command on PATH', () => {
+  // This is the shape that fixed a Windows-only failure. Looking for an
+  // `electron-builder` command means npm's `.cmd` shim, which spawnSync cannot
+  // execute without a shell — and prepending to PATH by hand needs
+  // path.delimiter, which is `;` on Windows. Hardcoding `:` corrupted PATH and
+  // the build died one line after printing its version.
+  const entry = build.builderEntry();
+  assert.match(entry, /electron-builder[/\\]cli\.js$/);
+  assert.ok(require('node:fs').existsSync(entry), `${entry} does not exist`);
+});
+
+test('every build refuses to publish and carries its version', () => {
+  const args = build.builderArgs(['--mac'], '1.2.3-dev.abc');
+  assert.deepEqual(args, ['--mac', '--publish', 'never', '--config.extraMetadata.version=1.2.3-dev.abc']);
+});
+
+test('caller flags come first, so they cannot be overridden by ours', () => {
+  const args = build.builderArgs(['--win', '--x64'], '1.0.0');
+  assert.deepEqual(args.slice(0, 2), ['--win', '--x64']);
+  assert.ok(args.includes('--publish') && args[args.indexOf('--publish') + 1] === 'never');
+});
+
 /* ------------------------------------------------------------------ checkTag */
 
 test('a matching tag passes', () => {

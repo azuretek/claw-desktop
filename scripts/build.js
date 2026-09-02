@@ -72,6 +72,21 @@ function resolveVersion(packageVersion, env = process.env) {
   };
 }
 
+/**
+ * electron-builder's own entry script.
+ *
+ * Resolved as a module rather than found on PATH so it is the copy in this
+ * project's node_modules, never a global install of another version.
+ */
+function builderEntry() {
+  return require.resolve('electron-builder/cli.js');
+}
+
+/** The full argument list handed to electron-builder. */
+function builderArgs(argv, version) {
+  return [...argv, '--publish', 'never', `--config.extraMetadata.version=${version}`];
+}
+
 function main(argv) {
   const packageVersion = JSON.parse(fs.readFileSync(PKG, 'utf8')).version;
   const resolved = resolveVersion(packageVersion);
@@ -80,17 +95,24 @@ function main(argv) {
 
   // `--publish never` on every path. Publishing is the release workflow's job,
   // and electron-builder will otherwise try to publish whenever it detects CI.
-  const args = [...argv, '--publish', 'never', `--config.extraMetadata.version=${resolved.version}`];
+  const args = builderArgs(argv, resolved.version);
 
-  const run = spawnSync('electron-builder', args, {
-    cwd: ROOT,
-    stdio: 'inherit',
-    // node_modules/.bin so this works without a global electron-builder.
-    env: { ...process.env, PATH: `${path.join(ROOT, 'node_modules', '.bin')}:${process.env.PATH}` },
-  });
+  // Run electron-builder's own entry script with this node, rather than looking
+  // for the `electron-builder` command. Two Windows failures avoided at once:
+  // npm installs a `.cmd` shim there, which spawnSync cannot execute without a
+  // shell, and prepending to PATH by hand needs `path.delimiter` (`;`, not `:`)
+  // — getting that wrong corrupts PATH instead of extending it, which is
+  // exactly how this failed the first time. `require.resolve` also means the
+  // build cannot silently use a globally installed electron-builder of another
+  // version.
+  const run = spawnSync(process.execPath, [builderEntry(), ...args], { cwd: ROOT, stdio: 'inherit' });
+  if (run.error) {
+    console.error(`  ! could not run electron-builder: ${run.error.message}`);
+    process.exit(1);
+  }
   process.exit(run.status === null ? 1 : run.status);
 }
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { resolveVersion };
+module.exports = { resolveVersion, builderEntry, builderArgs };
