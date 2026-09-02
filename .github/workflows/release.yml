@@ -4,32 +4,59 @@ name: Claw Desktop release
 # from macOS needs Wine for resource editing, so a native Windows runner is the
 # supported path rather than a local convenience.
 #
-# Two kinds of build, named differently on purpose:
+# Three ways in, and they mean different things:
+#
+#   push to main       a dev build of whatever just landed, versioned
+#                      `X.Y.Z-dev.<sha>`. Artifacts only, never published.
 #   tag `v*`           a release. The tag must equal package.json — checked
 #                      before anything is built — and the installers are
 #                      published to a GitHub Release.
-#   workflow_dispatch  a dev build, versioned `X.Y.Z-dev.<sha>` so its filename
-#                      says which commit it is. Artifacts only, never published.
+#   workflow_dispatch  a dev build of any ref, on demand.
+#
+# `paths-ignore` skips docs-only pushes. It is safe to combine with the tag
+# filter: GitHub does not evaluate path filters for tag pushes, so a release can
+# never be skipped by one.
 on:
   push:
+    branches: [main]
     tags: ['v*']
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - '.gitignore'
   workflow_dispatch:
 
+# Pushing three commits in a minute should build the last one, not all three.
+# Tag builds are exempt: a release run must never be cancelled by anything.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
-  # Runs once, on the cheapest runner, before either platform build starts. A
-  # tag that disagrees with package.json is then caught in seconds rather than
-  # after two three-minute builds have produced misnamed installers.
+  # Runs once, on the cheapest runner, before either platform build starts. It
+  # settles two things: what version this build carries, and whether it should
+  # happen at all. A tag that disagrees with package.json is caught here in
+  # seconds rather than after two three-minute builds have produced misnamed
+  # installers.
   version:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.decide.outputs.version }}
+      build: ${{ steps.decide.outputs.build }}
+      tagged: ${{ steps.decide.outputs.tagged }}
     steps:
+      # Tags are needed to spot a commit that is being released: `git push
+      # --follow-tags` raises a branch event and a tag event for the same commit,
+      # and only the tag one should build.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - id: decide
         run: node scripts/build-version.js
 
   build:
     needs: version
+    if: needs.version.outputs.build == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -62,13 +89,17 @@ jobs:
       - name: Build
         run: npm run ${{ matrix.script }} -- --config.extraMetadata.version=${{ needs.version.outputs.version }}
         env:
-          # Unsigned by design; stop electron-builder looking for an identity.
+          # Unsigned by design until a Developer ID is configured; stop
+          # electron-builder picking up a stray identity on a shared runner.
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
       - uses: actions/upload-artifact@v4
         with:
           name: claw-desktop-${{ matrix.artifact }}-${{ needs.version.outputs.version }}
-          retention-days: 30
+          # Dev builds land on every push to main, so they expire quickly. A
+          # release's artifacts are also attached to the GitHub Release, which
+          # is permanent, so these are only a convenience.
+          retention-days: ${{ needs.version.outputs.tagged == 'true' && 30 || 7 }}
           path: |
             dist/*.dmg
             dist/*.zip
@@ -83,8 +114,7 @@ jobs:
 
   release:
     needs: [version, build]
-    # Must track the tag filter above; workflow_dispatch builds are dev builds
-    # and are never published.
+    # Must track the tag filter above; dev builds are never published.
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:

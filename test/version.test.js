@@ -164,3 +164,52 @@ test('a dispatch build with no usable commit still builds, under the plain versi
   assert.equal(r.version, '1.0.0');
   assert.match(r.note, /falling back/);
 });
+
+/* --------------------------------------------------- build-or-stand-down */
+
+test('an ordinary push to main builds', () => {
+  const r = buildVersion.decide({ ref: 'refs/heads/main', sha: SHA, packageVersion: '1.0.0', headTags: [] });
+  assert.equal(r.build, true);
+});
+
+test('a tag build always builds', () => {
+  const r = buildVersion.decide({ ref: 'refs/tags/v1.2.3', sha: SHA, packageVersion: '1.2.3', headTags: ['v1.2.3'] });
+  assert.equal(r.build, true);
+});
+
+test('the branch half of a release push stands down', () => {
+  // `git push --follow-tags` raises a branch event AND a tag event for the same
+  // commit. Without this, every release builds twice and uploads two artifact
+  // sets for identical code — the dev one named misleadingly.
+  const r = buildVersion.decide({
+    ref: 'refs/heads/main', sha: SHA, packageVersion: '1.0.1', headTags: ['v1.0.1'],
+  });
+  assert.equal(r.build, false);
+  assert.match(r.note, /tag build publishes it/);
+});
+
+test('a non-version tag on the commit does not stop the dev build', () => {
+  // Only a release tag means "something else is publishing this".
+  const r = buildVersion.decide({
+    ref: 'refs/heads/main', sha: SHA, packageVersion: '1.0.0', headTags: ['nightly', 'sprint-4'],
+  });
+  assert.equal(r.build, true);
+});
+
+test('an explicit dispatch is honoured even on a tagged commit', () => {
+  // Someone asked for this build by hand; second-guessing them is wrong.
+  const r = buildVersion.decide({
+    ref: 'refs/heads/main', sha: SHA, packageVersion: '1.0.1',
+    eventName: 'workflow_dispatch', headTags: ['v1.0.1'],
+  });
+  assert.equal(r.build, true);
+});
+
+test('a stood-down build still reports a version, so the output is never empty', () => {
+  // The workflow reads `version` from the same step whether or not it builds;
+  // an empty output would fail the expression rather than skip cleanly.
+  const r = buildVersion.decide({
+    ref: 'refs/heads/main', sha: SHA, packageVersion: '1.0.1', headTags: ['v1.0.1'],
+  });
+  assert.equal(r.version, '1.0.1-dev.758853d656');
+});

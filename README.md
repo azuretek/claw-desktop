@@ -272,14 +272,33 @@ the CLI flag. Use `gh repo clone`, not `git clone git@…` — Git for Windows s
 its own `ssh` that cannot see keys held by the Windows OpenSSH agent. Install a
 built installer silently with `/S`.
 
-**Releasing** is `npm run release [patch|minor|major]`, which bumps
-`package.json` and the lockfile, commits, tags, and pushes; CI builds both
-platforms and publishes a GitHub Release. It refuses, with nothing written, off
-`main`, on a dirty tree, without an upstream, or on failing tests. **Never bump
-the version by hand** — `artifactName` interpolates it, so a hand-pushed tag can
-publish a release named `v1.1.0` full of `…-1.0.0-x64.exe`. CI's `version` job
-refuses that before either build starts. Running the workflow manually produces
-a dev build versioned for its commit, never published.
+## Builds and releases
+
+CI builds on three triggers, and they mean different things:
+
+| Trigger | Produces | Where it goes |
+|---|---|---|
+| **Push to `main`** | Dev build, `1.0.0-dev.<sha>` | Actions artifacts, 7 days |
+| **Tag `v*`** | Release, `1.0.0` | Published to [Releases](https://github.com/azuretek/claw-desktop/releases), permanent |
+| **Manual dispatch** | Dev build of any ref | Actions artifacts, 7 days |
+
+Docs-only pushes are skipped (`paths-ignore`), and pushing several commits in a
+row cancels the superseded runs — except tag builds, which are never cancelled.
+
+**Cutting a release** is `npm run release [patch|minor|major]`. It bumps
+`package.json` and the lockfile, commits, tags, and pushes; CI does the rest. It
+refuses, with nothing written, off `main`, on a dirty tree, without an upstream,
+or on failing tests.
+
+**Never bump the version by hand** — `artifactName` interpolates it, so a
+hand-pushed tag can publish a release named `v1.1.0` full of
+`…-1.0.0-x64.exe`. CI's `version` job refuses that before either build starts.
+
+That same job also decides *whether* to build. `git push --follow-tags` sends
+the release commit and its tag together, and GitHub raises a separate event for
+each — so the branch run stands down and lets the tag run publish, rather than
+building identical code twice and uploading a misleadingly named dev copy
+beside the release. A manual dispatch is always honoured.
 
 ## Layout
 
