@@ -24,7 +24,7 @@ and has no access to the host beyond the window it draws.
 ## Install
 
 Grab the installer for your platform from the repo's
-[Releases](https://github.com/azuretek/home_server/releases) page.
+[Releases](https://github.com/azuretek/claw-desktop/releases) page.
 
 - **Windows** — run `ClawDesktop-Setup-<version>-<arch>.exe`. Per-user, no admin.
 - **macOS** — open the `.dmg` and drag to Applications. The build is **unsigned**,
@@ -193,8 +193,8 @@ Windows on Windows. Two ways:
 - **On the Windows box directly** — fastest, and costs no CI minutes:
 
   ```
-  gh repo clone azuretek/home_server
-  cd home_server\desktop\claw-desktop
+  gh repo clone azuretek/claw-desktop
+  cd claw-desktop
   npm ci
   npm run build:win
   dist\ClawDesktop-Setup-1.0.0-x64.exe /S     :: /S installs silently, per-user
@@ -209,8 +209,8 @@ Windows on Windows. Two ways:
   held by the Windows OpenSSH agent, so an SSH clone fails with
   `Permission denied (publickey)` even when `ssh -T git@github.com` succeeds.
 
-- **`desktop-release` GitHub Actions workflow** — builds each platform on its own
-  runner. Push a `desktop-v*` tag to cut a release, or run it manually for
+- **`release` GitHub Actions workflow** — builds each platform on its own
+  runner. Push a `v*` tag to cut a release, or run it manually for
   artifacts. Note that private-repo minutes bill at 2× for Windows and 10× for
   macOS, so prefer a local build for routine work.
 

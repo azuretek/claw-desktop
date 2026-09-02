@@ -1,0 +1,68 @@
+name: Claw Desktop release
+
+# Builds each platform on its own runner. Cross-building the Windows installer
+# from macOS needs Wine for resource editing, so a native Windows runner is the
+# supported path rather than a local convenience.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            script: build:mac
+            artifact: macos
+          - os: windows-latest
+            script: build:win
+            artifact: windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run ${{ matrix.script }}
+        env:
+          # Unsigned by design; stop electron-builder looking for an identity.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: claw-desktop-${{ matrix.artifact }}
+          retention-days: 30
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.exe
+
+  release:
+    needs: build
+    # Must track the tag filter above; workflow_dispatch runs build only.
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true
