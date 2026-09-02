@@ -126,23 +126,42 @@ Two caveats worth knowing:
 
 ## Window chrome
 
-The main window is frameless on macOS and Windows, so the app's colour runs to
-the top edge and the window controls float over the content.
+The main window is frameless on macOS and Windows: no OS title bar, and the
+app's colour runs to the top edge. The window buttons sit on a 36px strip the
+app draws for itself, above the page, carrying the current session's name.
 
-This works because the Control UI supports a native host directly: its stylesheet
-reads marker classes on `<html>` that it never sets itself — `openclaw-native-macos`
-and `openclaw-native-web-chrome` — and under them it grows its own header rows to
-`--openclaw-native-titlebar-height` and insets its controls to clear the native
-window buttons. The app sets the class; the UI's header *becomes* the title bar.
-The app adds only the one thing the UI has no way to know: which regions drag the
-window (`.chat-pane__header` / `.side-panel__header`, with every interactive
-descendant carved back out as `no-drag`).
+They are the OS's real buttons — macOS traffic lights, Windows caption buttons
+via `titleBarOverlay` — so snap layouts, tooltips and the taskbar preview keep
+working, and the window can never be made unclosable by a CSS mistake. The strip
+just gives them somewhere to live that is not on top of the page.
 
-The obvious alternative — reserve a strip and push the page down — does not work,
-and the reason is worth recording: `vh` is always the **whole** window, so a
-page sized `height: 100vh` stays window-height and lands exactly the strip's
-height below the fold. Measured on a probe page: 754px of content in a 720px
-window.
+**Why a strip rather than letting them float over the content.** The Control UI
+invites the floating approach: its stylesheet reads marker classes on `<html>`
+it never sets itself (`openclaw-native-macos`, `openclaw-native-web-chrome`) and
+under them grows its header rows to titlebar height and insets them for native
+window buttons. The app used to set those classes and add insets on top.
+
+It does not work, because "which element is under the window buttons" has no
+stable answer. In order, each fixed and each then wrong in some other layout
+state: the chat pane header; a docked side panel's header; the empty "Open a
+tab" header; the custodian panel, which is `position: fixed; right: 0` and so
+cannot be moved by any ancestor's padding; the sidebar brand row on macOS; and
+finally any routed page's own top-left content once the nav is collapsed —
+upstream computes `--shell-titlebar-inset: 90px` for that case and applies it to
+`.chat-pane__header` alone.
+
+A smaller viewport is the one inset a fixed-position overlay cannot escape, so
+the page loads into a `WebContentsView` that starts below the strip. Nothing it
+draws can share space with the buttons because it does not extend into that
+band — and **the app now injects nothing into the gateway page at all**: no
+marker classes, no drag regions, no insets, and so no dependency on upstream
+markup.
+
+Note this is not the same as reserving space *inside* the page, which was tried
+and failed: `vh` is always the **whole** window, so a page sized `height: 100vh`
+stays window-height and lands exactly the strip's height below the fold —
+measured on a probe page, 754px of content in a 720px window. Shrinking the view
+shrinks the viewport, so `100vh` is correct by definition.
 
 Linux keeps its normal frame; window managers vary too much to be confident the
 user can still move and close a frameless window.
@@ -268,7 +287,7 @@ Windows on Windows. Two ways:
 src/main.js          app lifecycle, window, tray, menus, navigation guards
 src/certs.js         trust-on-first-use certificate pinning
 src/profile.js       one-time profile move for the OpenClaw -> Claw Desktop rename
-src/chrome.js        frameless window chrome + Control UI native-host mode
+src/chrome.js        title strip geometry + theme adopted from the page
 src/config.js        atomic JSON config store (no secrets)
 src/secrets.js       per-gateway token/password/headers, safeStorage-encrypted
 src/defaults.js      suggested gateways and defaults  ← edit for a new machine
@@ -280,9 +299,10 @@ scripts/make-icons.mjs
 ## Status and licence
 
 A personal project, shared because it might be useful — not a product. There is
-no support commitment and no release schedule, builds are unsigned, and the
-window chrome depends on marker classes the Control UI exposes but does not
-document as an API, so an upstream restyle could require a fix here.
+no support commitment and no release schedule, and builds are unsigned. The app
+deliberately does not depend on the Control UI's markup, so an upstream restyle
+should not break the window chrome; the login-gate password autofill is the one
+remaining place that reads the UI's DOM, and it fails soft by design.
 
 Issues and pull requests are welcome; slow replies are likely.
 
