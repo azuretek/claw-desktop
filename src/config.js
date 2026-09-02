@@ -34,11 +34,13 @@ function blank() {
     // upgraded gateway has its service-worker cache dropped exactly once rather
     // than on every connect. Learned, never configured; see src/cache.js.
     swVersions: {},
-    // Version of this app that last ran. An app upgrade brings a new Electron
-    // and a new preload, so its caches are cleared once on the first run after.
-    // null on a fresh profile, which is deliberately *not* an upgrade: there is
-    // nothing stale in a cache that does not exist yet.
-    appVersion: null,
+    // Fingerprint of the app build that last ran — version plus the app
+    // bundle's size and mtime, because the semver alone does not move between
+    // builds. An app upgrade brings a new Electron and a new preload, so its
+    // caches are cleared once on the first run after. null on a fresh profile,
+    // which is deliberately *not* an upgrade: there is nothing stale in a cache
+    // that does not exist yet.
+    appBuild: null,
   };
 }
 

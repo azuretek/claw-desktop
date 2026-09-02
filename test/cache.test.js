@@ -40,6 +40,21 @@ test('returns null rather than throwing on anything unexpected', () => {
   }
 });
 
+/* --------------------------------------------------------- buildFingerprint */
+
+test('two builds of the same version fingerprint differently', () => {
+  // The case that matters: nothing bumps package.json, so 1.0.0 -> 1.0.0 is the
+  // normal upgrade and a version-only comparison would never fire.
+  const before = cache.buildFingerprint({ version: '1.0.0', size: 168933, mtimeMs: 1788300000000 });
+  const after = cache.buildFingerprint({ version: '1.0.0', size: 171204, mtimeMs: 1788390000000 });
+  assert.notEqual(before, after);
+});
+
+test('the same build fingerprints identically across launches', () => {
+  const stat = { version: '1.0.0', size: 168933, mtimeMs: 1788300000000.4 };
+  assert.equal(cache.buildFingerprint(stat), cache.buildFingerprint({ ...stat, mtimeMs: 1788300000000.2 }));
+});
+
 /* ------------------------------------------------------------ decideRefresh */
 
 test('a first sighting records without clearing', () => {

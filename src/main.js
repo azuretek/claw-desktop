@@ -5,6 +5,7 @@ const {
   globalShortcut, nativeImage, ipcMain, screen, session,
 } = require('electron');
 const path = require('node:path');
+const fs = require('node:fs');
 const https = require('node:https');
 const config = require('./config');
 const cache = require('./cache');
@@ -372,19 +373,38 @@ async function clearCacheAndReload() {
 }
 
 /**
+ * Identify the installed build.
+ *
+ * Stats the app bundle — `app.asar` in a packaged app, the project directory in
+ * development — because the semver alone does not move between builds. See
+ * cache.buildFingerprint. A stat that fails degrades to the version, which
+ * simply means this particular upgrade is not detected; it must never throw and
+ * take startup with it.
+ */
+function appBuildId() {
+  const version = app.getVersion();
+  try {
+    const stat = fs.statSync(app.getAppPath());
+    return cache.buildFingerprint({ version, size: stat.size, mtimeMs: stat.mtimeMs });
+  } catch {
+    return version;
+  }
+}
+
+/**
  * Clear once on the first run after an app upgrade, before anything loads.
  *
  * A new build brings a new Electron and a new preload; leaving a worker from
  * the previous one in place is the same staleness by a different route. A
- * profile with no recorded version is a fresh install, not an upgrade.
+ * profile with no recorded build is a fresh install, not an upgrade.
  */
 async function clearOnAppUpgrade() {
-  const previous = config.get().appVersion;
-  const current = app.getVersion();
+  const previous = config.get().appBuild;
+  const current = appBuildId();
   if (previous === current) return;
-  config.update({ appVersion: current, swVersions: {} });
+  config.update({ appBuild: current, swVersions: {} });
   if (!previous) return;
-  console.log(`[claw] upgraded ${previous} -> ${current}; clearing web cache`);
+  console.log(`[claw] app build changed (${previous} -> ${current}); clearing web cache`);
   await cache.clear(session.defaultSession, gatewayOrigins());
 }
 

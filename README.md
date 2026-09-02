@@ -218,9 +218,12 @@ Three ways out, in order of how little you have to notice:
   in `config.json` (`swVersions`). If it moved, the caches are dropped and the
   page reloads — once, automatically.
 - **This app was upgraded.** A new build brings a new Electron and a new
-  preload, so the first run after a version change clears the caches before
-  anything loads. A profile with no recorded `appVersion` is a fresh install,
-  not an upgrade, and clears nothing.
+  preload, so the first run after one clears the caches before anything loads.
+  What counts as "a new build" is `appBuild` in `config.json` — the version
+  *plus the app bundle's size and mtime*, because nothing bumps the version in
+  `package.json` and a semver comparison would therefore never fire. A profile
+  with no recorded `appBuild` is a fresh install, not an upgrade, and clears
+  nothing.
 - **Neither, but it still looks wrong.** **File → Clear cache and reload**, also
   on the tray menu. It is on the tray deliberately: Windows runs with
   `autoHideMenuBar`, so the menu is behind an Alt press exactly when the window

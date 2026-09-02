@@ -47,6 +47,25 @@ function parseServiceWorkerVersion(source) {
 }
 
 /**
+ * A value that changes whenever a *different build* of this app is installed.
+ *
+ * Deliberately not `app.getVersion()` alone. The version in package.json is
+ * hand-maintained and in practice does not move — the build that introduced
+ * this code and the one before it are both `1.0.0` — so comparing versions
+ * would never fire and the app-upgrade clear would be decoration. The app
+ * bundle's size and mtime do change on every install.
+ *
+ * @param {{version: string, size: number, mtimeMs: number}} stat
+ * @returns {string}
+ */
+function buildFingerprint({ version, size, mtimeMs }) {
+  // mtime is rounded because filesystems disagree about sub-millisecond
+  // precision, and a fingerprint that drifts on its own would clear the cache
+  // on every single launch.
+  return `${version}:${size}:${Math.round(mtimeMs)}`;
+}
+
+/**
  * What to do about a build id we just read.
  *
  * `record` on a first sighting is the important case: an origin we have never
@@ -133,6 +152,7 @@ async function clear(ses, origins = []) {
 module.exports = {
   CACHE_STORAGES,
   SW_SOURCE_PROBE,
+  buildFingerprint,
   parseServiceWorkerVersion,
   decideRefresh,
   clear,

@@ -11,10 +11,10 @@
     "test": "node --test test/*.test.js",
     "start": "electron .",
     "icons": "node scripts/make-icons.mjs",
-    "pack": "electron-builder --dir",
-    "build:mac": "electron-builder --mac",
-    "build:win": "electron-builder --win",
-    "build:linux": "electron-builder --linux"
+    "pack": "electron-builder --dir --publish never",
+    "build:mac": "electron-builder --mac --publish never",
+    "build:win": "electron-builder --win --publish never",
+    "build:linux": "electron-builder --linux --publish never"
   },
   "devDependencies": {
     "electron": "^44.1.1",
