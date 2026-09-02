@@ -48,7 +48,7 @@ test('the right-edge inset follows whichever header reaches the corner', () => {
   // Side-docked panel open: the panel header owns the corner instead...
   assert.ok(
     css.includes(
-      'html.openclaw-native-web-chrome .sidebar-region--expanded:not(.sidebar-region--bottom) ' +
+      'html.openclaw-native-web-chrome .sidebar-region:not(.sidebar-region--bottom) ' +
         `.side-panel__header { padding-right: ${w}; }`,
     ),
     'side panel header must be inset when the panel is docked beside the chat',
@@ -57,10 +57,22 @@ test('the right-edge inset follows whichever header reaches the corner', () => {
   // ...and the chat header gives its inset back, or the gap lands mid-window.
   assert.ok(
     css.includes(
-      'html.openclaw-native-web-chrome .sidebar-region--expanded:not(.sidebar-region--bottom) ' +
-        '.chat-pane__header { padding-right: 0; }',
+      'html.openclaw-native-web-chrome .sidebar-region:not(.sidebar-region--bottom)' +
+        ':has(.side-panel) .chat-pane__header { padding-right: 0; }',
     ),
     'chat header must drop its inset once the panel owns the corner',
+  );
+});
+
+// Regression: the first attempt gated the handoff on `.sidebar-region--expanded`,
+// which is the maximise/restore toggle, not "a panel is open". An ordinary
+// docked panel never carries it, so the inset never moved and the panel's close
+// button stayed under the caption buttons.
+test('the panel handoff does not depend on the expand/restore state class', () => {
+  const css = flat(chrome.dragCss('win32'));
+  assert.ok(
+    !css.includes('sidebar-region--expanded'),
+    'handoff must key off panel presence, not layout.expanded',
   );
 });
 
@@ -68,7 +80,7 @@ test('a bottom-docked panel leaves the inset on the chat header', () => {
   // `--bottom` turns the region into a column, so the panel sits below the chat
   // pane and never reaches the caption buttons.
   const css = flat(chrome.dragCss('win32'));
-  const handoffs = css.match(/\.sidebar-region--expanded[^{]*\{/g) || [];
+  const handoffs = css.match(/\.sidebar-region[^{]*\{/g) || [];
   assert.ok(handoffs.length > 0, 'expected the panel handoff rules to exist');
   for (const selector of handoffs) {
     assert.match(selector, /:not\(\.sidebar-region--bottom\)/);

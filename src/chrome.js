@@ -84,21 +84,30 @@ function dragCss(platform = process.platform) {
   // right, over the page, so the right edge is ours to handle.
   //
   // Which element reaches that edge is not fixed: `.sidebar-region` lays out
-  // `.sidebar-region__primary` (the chat pane) and then `.side-panel`, so
-  // opening a side-docked panel hands the top-right corner to the PANEL's
-  // header — and its close button lives at that header's right end, directly
+  // `.sidebar-region__primary` (the chat pane) and then
+  // `.sidebar-region__right-runtime` holding `.side-panel`, so opening a
+  // side-docked panel hands the top-right corner to the PANEL's header — and
+  // its close/dock/expand buttons live at that header's right end, directly
   // under the OS buttons, which are drawn above the web contents and eat the
   // click. That is a panel you can open and then cannot close.
   //
+  // Detect that structurally with `:has()`, NOT with a state class. The obvious
+  // candidate, `.sidebar-region--expanded`, is wrong: `expanded` is the
+  // maximise/restore toggle (`layout.expanded` in the bundle), so an ordinary
+  // docked panel never carries it. Presence of `.side-panel` is the real
+  // condition, and it also covers the empty "Open a tab" state, which renders
+  // `.side-panel__header--empty` — same class, same corner, same dead buttons.
+  //
   // Bottom-docked panels (`--bottom` switches the region to a column) sit below
   // the chat pane and never reach the corner, so the chat header keeps the inset.
+  const sideDocked = `${scope} .sidebar-region:not(.sidebar-region--bottom)`;
   const rightInset = platform === 'win32'
     ? `
     ${scope} .chat-pane__header { padding-right: ${WIN_CONTROLS_WIDTH}; }
-    ${scope} .sidebar-region--expanded:not(.sidebar-region--bottom) .chat-pane__header {
+    ${sideDocked}:has(.side-panel) .chat-pane__header {
       padding-right: 0;
     }
-    ${scope} .sidebar-region--expanded:not(.sidebar-region--bottom) .side-panel__header {
+    ${sideDocked} .side-panel__header {
       padding-right: ${WIN_CONTROLS_WIDTH};
     }`
     : '';
