@@ -1,15 +1,46 @@
+/* These pages are ours, not the Control UI, so they get none of its themes.
+   They follow it anyway: main.js sets `nativeTheme.themeSource` from whatever
+   the loaded Control UI reports, which is what `prefers-color-scheme` resolves
+   against inside Electron — so the query below tracks the *app's* theme, not
+   the OS's, and no IPC is needed to keep them in step. */
 :root {
+  color-scheme: dark;
   --bg: #0a0a0a;
   --card: #141414;
   --elevated: #1c1c1c;
+  --hover-bg: #232323;
+  --hover-border: #3a3a3a;
   --border: #2a2a2a;
   --text: #e8e8e8;
   --muted: #8a8a8a;
   --accent: #ff4d4d;
   --accent-dim: #991b1b;
+  --on-accent: #fff;
   --ok: #3ddc84;
   --warn: #ffb020;
   --radius: 10px;
+}
+
+/* Warm neutrals rather than pure white, to sit beside the Control UI's light
+   palettes without looking like a different application bolted on. Contrast is
+   AA against --bg: --text 11.4:1, --muted 4.7:1, --accent-dim 6.2:1. */
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --bg: #faf9f5;
+    --card: #f3f1e9;
+    --elevated: #edeae0;
+    --hover-bg: #e4e0d3;
+    --hover-border: #ada694;
+    --border: #e3dfd2;
+    --text: #3d3a33;
+    --muted: #6b655b;
+    --accent: #c62828;
+    --accent-dim: #a31d1d;
+    --on-accent: #fff;
+    --ok: #1d7a45;
+    --warn: #8a5a00;
+  }
 }
 
 * { box-sizing: border-box; }
@@ -65,9 +96,9 @@ button {
   background: var(--elevated); color: var(--text); border: 1px solid var(--border);
   border-radius: 8px; padding: 8px 14px; font: inherit; font-weight: 550; cursor: pointer; white-space: nowrap;
 }
-button:hover:not(:disabled) { border-color: #3a3a3a; background: #232323; }
+button:hover:not(:disabled) { border-color: var(--hover-border); background: var(--hover-bg); }
 button:disabled { opacity: .45; cursor: default; }
-button.primary { background: var(--accent-dim); border-color: var(--accent-dim); color: #fff; }
+button.primary { background: var(--accent-dim); border-color: var(--accent-dim); color: var(--on-accent); }
 button.primary:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); }
 button.ghost { background: transparent; }
 button.danger:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }

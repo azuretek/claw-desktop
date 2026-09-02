@@ -147,10 +147,44 @@ window.
 Linux keeps its normal frame; window managers vary too much to be confident the
 user can still move and close a frameless window.
 
+### Following the UI's theme
+
+Some surfaces belong to the app, not the page: the Windows caption strip (drawn
+by the OS *above* the web contents), each window's background behind an
+unpainted page, and the settings and error pages. The Control UI's stylesheet
+cannot reach any of them, and it ships twelve palettes — six of them light.
+Pinned to one dark palette, a light theme left a 137×50 near-black hole in the
+top-right corner of an otherwise cream window.
+
+So the app reads the colours back off the page rather than assuming them. A
+sandboxed preload resolves `var(--bg)` / `var(--text)` against a throwaway
+element — asking the engine to flatten whatever the theme was authored in down
+to `rgb()` — and reports the result. The main process parses that to `#rrggbb`,
+discards anything transparent or unparseable, and repaints the caption overlay
+and window background. A `MutationObserver` on `data-theme` catches theme
+changes, which the picker makes in place with no navigation to hang a load
+event off.
+
+`nativeTheme.themeSource` is then set from the **page**, not the OS: the theme
+is chosen in the Control UI, so following the OS would leave a light UI sitting
+in a dark settings window. That is also what makes `prefers-color-scheme` inside
+the app's own `file://` pages resolve to the UI's answer, so `ui.css` needs no
+IPC of its own.
+
+The reporting preload runs for remote pages too, and exposes nothing to them —
+it reads colours out, never in. A hostile gateway could report any colour it
+liked; the blast radius is an ugly title bar, because nothing reaches an
+Electron API without being parsed into a hex triple first.
+
+The mode alone is remembered in `config.json` (`themeMode`), so a cold start
+opens in the right colours instead of flashing the wrong palette for as long as
+the gateway takes to answer — over Tailscale to a sleeping box, that is not a
+flash.
+
 ## Settings
 
 Everything lives in one window (**Cmd/Ctrl+,**, or the tray menu). It keeps a
-normal OS title bar, drawn dark via `nativeTheme`:
+normal OS title bar, and follows the Control UI's light or dark theme:
 
 - **Gateways** — add, remove, edit, test, switch. Each row shows what the app will
   sign in with. Switching is also in the tray menu.

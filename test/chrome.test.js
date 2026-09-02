@@ -129,3 +129,75 @@ test('header controls stay clickable inside the drag regions', () => {
     }
   }
 });
+
+/* ------------------------------------------------------------------- theme */
+
+// The bug these guard: every self-painted surface was pinned to one dark
+// palette, so in any of the Control UI's six light themes the Windows caption
+// strip stayed near-black — a 137x50 hole in the corner of a cream window.
+
+test('computed colours in any notation arrive as #rrggbb', () => {
+  // What the probe actually sends: CSS resolves custom properties to rgb()
+  // before we ever see them, whatever the stylesheet was authored in.
+  assert.strictEqual(chrome.normalizeColor('rgb(250, 249, 245)'), '#faf9f5');
+  assert.strictEqual(chrome.normalizeColor('rgba(10, 10, 10, 1)'), '#0a0a0a');
+  assert.strictEqual(chrome.normalizeColor('rgb(250 249 245 / 100%)'), '#faf9f5');
+  // Our own fallbacks are written as hex.
+  assert.strictEqual(chrome.normalizeColor('#FAF9F5'), '#faf9f5');
+  assert.strictEqual(chrome.normalizeColor('#abc'), '#aabbcc');
+});
+
+test('an unthemed page reports no colour rather than black', () => {
+  // `background-color: var(--bg)` computes to transparent when --bg does not
+  // exist, which is exactly what the login gate and our error page look like.
+  // Reading that as black would repaint the strip black on precisely the pages
+  // that have no theme to follow.
+  assert.strictEqual(chrome.normalizeColor('rgba(0, 0, 0, 0)'), null);
+  assert.strictEqual(chrome.normalizeColor('transparent'), null);
+  assert.strictEqual(chrome.normalizeColor(''), null);
+  assert.strictEqual(chrome.normalizeColor(undefined), null);
+  // Nothing a hostile gateway can send reaches an Electron API unparsed.
+  assert.strictEqual(chrome.normalizeColor('red; --evil: 1'), null);
+  assert.strictEqual(chrome.normalizeColor('url(http://x/)'), null);
+});
+
+test('a report with no usable surface is discarded whole', () => {
+  // The caller keeps the colours it already had; a half-applied theme is worse
+  // than a stale one.
+  assert.strictEqual(chrome.themeFromReport(null), null);
+  assert.strictEqual(chrome.themeFromReport({}), null);
+  assert.strictEqual(chrome.themeFromReport({ surface: 'rgba(0, 0, 0, 0)' }), null);
+});
+
+test('the page decides light or dark; luminance only breaks ties', () => {
+  // data-theme-mode is what the Control UI sets beside data-theme
+  // ("absolutely" vs "absolutely-light"), so it wins where it exists.
+  const declared = chrome.themeFromReport({ mode: 'light', surface: 'rgb(250, 249, 245)' });
+  assert.strictEqual(declared.mode, 'light');
+  assert.strictEqual(declared.surface, '#faf9f5');
+
+  // A page with no declaration still has to be classified.
+  assert.strictEqual(chrome.themeFromReport({ surface: 'rgb(250, 249, 245)' }).mode, 'light');
+  assert.strictEqual(chrome.themeFromReport({ surface: 'rgb(10, 10, 10)' }).mode, 'dark');
+  // Junk in the mode field must not become the mode.
+  assert.strictEqual(chrome.themeFromReport({ mode: 'neon', surface: 'rgb(10,10,10)' }).mode, 'dark');
+});
+
+test('caption glyphs never come out the same colour as the strip', () => {
+  // The failure is silent and total: an invisible close button on a window
+  // whose frame the OS has already given away.
+  const halfStyled = chrome.themeFromReport({ surface: 'rgb(250, 249, 245)', symbol: 'rgba(0,0,0,0)' });
+  assert.strictEqual(halfStyled.symbol, '#3d3a33', 'light surface must fall back to a dark glyph');
+  assert.ok(chrome.isLight(halfStyled.surface) && !chrome.isLight(halfStyled.symbol));
+
+  const dark = chrome.themeFromReport({ surface: 'rgb(10, 10, 10)', symbol: '' });
+  assert.ok(!chrome.isLight(dark.surface) && chrome.isLight(dark.symbol));
+});
+
+test('windows opened before the page answers use the remembered mode', () => {
+  // Cold start over a slow link is seconds, not a flash, so the seed matters.
+  assert.strictEqual(chrome.fallbackTheme('light').mode, 'light');
+  assert.ok(chrome.isLight(chrome.fallbackTheme('light').surface));
+  assert.strictEqual(chrome.fallbackTheme('dark').mode, 'dark');
+  assert.strictEqual(chrome.fallbackTheme(null).mode, 'dark', 'first ever run defaults dark');
+});

@@ -24,8 +24,21 @@
 // fights nothing.
 
 const TITLEBAR_HEIGHT = 50;
-const SURFACE = '#0a0a0a';
-const SYMBOL = '#c9c9c9';
+
+// There are surfaces the Control UI's stylesheet can never reach: the Windows
+// caption strip (drawn by the OS, above the web contents), the window's own
+// background behind an unpainted page, and our settings/error pages. They used
+// to be pinned to one dark palette, which is correct exactly as long as the UI
+// is dark — and the UI ships twelve palettes, six of them light. In a light
+// theme the caption strip stayed near-black: a 137x50 hole in the top-right
+// corner of an otherwise cream window.
+//
+// So these are a starting point, not the answer. The real colours are read back
+// off the loaded page (see `themeProbe`) and pushed onto the window; these only
+// have to hold for the few hundred milliseconds before the first paint, and to
+// give the settings window something sane when no page has ever loaded.
+const FALLBACK_DARK = { mode: 'dark', surface: '#0a0a0a', symbol: '#c9c9c9' };
+const FALLBACK_LIGHT = { mode: 'light', surface: '#faf9f5', symbol: '#3d3a33' };
 
 // Width to keep clear on the right for the Windows caption buttons, asked of the
 // platform rather than guessed. `titleBarOverlay` turns on the Window Controls
@@ -51,8 +64,14 @@ const WIN_CONTROLS_WIDTH =
 const MAC_LIGHTS_X = 16;
 const MAC_CONTENT_INSET = MAC_LIGHTS_X + 52 + 10;
 
-/** BrowserWindow options for the main window. */
-function windowOptions() {
+/**
+ * BrowserWindow options for the main window.
+ *
+ * `theme` is the last known page theme, so a window opens in roughly the right
+ * colours instead of flashing the wrong ones. It is only a seed: `applyTheme`
+ * corrects it as soon as the page reports.
+ */
+function windowOptions(theme = FALLBACK_DARK) {
   if (process.platform === 'darwin') {
     return {
       titleBarStyle: 'hiddenInset',
@@ -66,7 +85,7 @@ function windowOptions() {
       // Windows keeps drawing real minimise/maximise/close buttons, so snap
       // layouts and tooltips still work and the window can never become
       // unclosable — it just wears the app's colours.
-      titleBarOverlay: { color: SURFACE, symbolColor: SYMBOL, height: TITLEBAR_HEIGHT },
+      titleBarOverlay: { color: theme.surface, symbolColor: theme.symbol, height: TITLEBAR_HEIGHT },
     };
   }
   // Linux window managers vary too much to reliably hand back a frameless
@@ -177,9 +196,124 @@ function applyToPage(wc) {
   wc.insertCSS(dragCss()).catch(() => {});
 }
 
-/** Ask the OS to draw our remaining native surfaces (the settings window) dark. */
-function applyTheme() {
-  require('electron').nativeTheme.themeSource = 'dark';
+/* ------------------------------------------------------------------- theme */
+
+// Everything below is deliberately pure so it can be tested under plain
+// `node --test`, and so nothing a remote page sends reaches an Electron API
+// without being parsed into a known-good `#rrggbb` first.
+
+/**
+ * Parse any colour the page can hand back into `#rrggbb`, or null.
+ *
+ * The probe reports *computed* values, which CSS resolves to `rgb()`/`rgba()`
+ * whatever the stylesheet wrote — so a theme authored in `oklch()` or
+ * `color-mix()` arrives already flattened and no colour-space maths is needed
+ * here. Hex is still accepted because our own fallbacks are written that way.
+ *
+ * Fully transparent is a failure, not a colour: `background-color` computes to
+ * `rgba(0, 0, 0, 0)` when the custom property does not exist, which is exactly
+ * what the login gate and our own error page look like. Treating that as black
+ * would repaint the caption strip black on precisely the pages that have no
+ * theme to follow.
+ */
+function normalizeColor(value) {
+  if (typeof value !== 'string') return null;
+  const raw = value.trim().toLowerCase();
+
+  const short = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/.exec(raw);
+  if (short) return `#${short[1]}${short[1]}${short[2]}${short[2]}${short[3]}${short[3]}`;
+
+  // Trailing pair is 8-digit hex alpha; drop it, the strip cannot be translucent.
+  const long = /^#([0-9a-f]{6})(?:[0-9a-f]{2})?$/.exec(raw);
+  if (long) return `#${long[1]}`;
+
+  const rgb = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)\s*(?:[,/]\s*([\d.%]+)\s*)?\)$/.exec(raw);
+  if (!rgb) return null;
+  if (rgb[4] !== undefined) {
+    const alpha = rgb[4].endsWith('%') ? parseFloat(rgb[4]) / 100 : parseFloat(rgb[4]);
+    if (!(alpha > 0.5)) return null;
+  }
+  const channels = [rgb[1], rgb[2], rgb[3]].map((n) => {
+    const v = Math.round(Number(n));
+    return Math.max(0, Math.min(255, v));
+  });
+  if (channels.some((c) => !Number.isFinite(c))) return null;
+  return `#${channels.map((c) => c.toString(16).padStart(2, '0')).join('')}`;
+}
+
+/** WCAG relative luminance, used only to answer "is this a light surface?". */
+function isLight(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  const linear = (c) => {
+    const s = c / 255;
+    return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  };
+  const l = 0.2126 * linear((n >> 16) & 255)
+    + 0.7152 * linear((n >> 8) & 255)
+    + 0.0722 * linear(n & 255);
+  return l > 0.4;
+}
+
+/**
+ * Turn a raw probe report into a theme, or null if there is nothing usable.
+ *
+ * The surface is the one value that must survive: without it there is no strip
+ * colour and the caller should keep whatever it already had. The symbol colour
+ * and the light/dark mode are both *derived* from the surface when the page
+ * does not supply them, because the page is free to be half-styled (our error
+ * page sets a background and no `--text`) and a caption glyph the same colour
+ * as the strip it sits on is an invisible close button.
+ */
+function themeFromReport(report) {
+  if (!report || typeof report !== 'object') return null;
+  const surface = normalizeColor(report.surface);
+  if (!surface) return null;
+
+  const light = isLight(surface);
+  const symbol = normalizeColor(report.symbol)
+    || (light ? FALLBACK_LIGHT.symbol : FALLBACK_DARK.symbol);
+
+  // Prefer the page's own declaration of intent. `data-theme-mode` is what the
+  // Control UI sets alongside `data-theme` ("absolutely" vs "absolutely-light"),
+  // and it is authoritative in the one case luminance gets wrong: a mid-tone
+  // palette that sits either side of the threshold.
+  const declared = report.mode === 'light' || report.mode === 'dark' ? report.mode : null;
+  return { mode: declared || (light ? 'light' : 'dark'), surface, symbol };
+}
+
+/** The theme to open windows with before any page has reported one. */
+function fallbackTheme(mode) {
+  return mode === 'light' ? { ...FALLBACK_LIGHT } : { ...FALLBACK_DARK };
+}
+
+/**
+ * Repaint the surfaces the page's stylesheet cannot reach.
+ *
+ * `nativeTheme.themeSource` is set from the *page*, not the OS, on purpose: the
+ * Control UI's theme is chosen in the Control UI, so following the OS would let
+ * a light UI sit in a dark settings window and vice versa. Setting it here is
+ * also what makes `prefers-color-scheme` in our own file:// pages resolve to the
+ * same answer, so ui.css needs no IPC of its own.
+ */
+function applyTheme(theme, windows = []) {
+  const { nativeTheme } = require('electron');
+  nativeTheme.themeSource = theme.mode;
+
+  for (const win of windows) {
+    if (!win || win.isDestroyed()) continue;
+    win.setBackgroundColor(theme.surface);
+    // Only windows created with `titleBarOverlay` accept this, and it throws
+    // rather than no-ops on the ones that were not — including every window on
+    // macOS and Linux.
+    if (process.platform !== 'win32') continue;
+    try {
+      win.setTitleBarOverlay({
+        color: theme.surface,
+        symbolColor: theme.symbol,
+        height: TITLEBAR_HEIGHT,
+      });
+    } catch { /* window has no overlay; its frame is already the right colour */ }
+  }
 }
 
 module.exports = {
@@ -191,6 +325,10 @@ module.exports = {
   dragCss,
   applyToPage,
   applyTheme,
+  themeFromReport,
+  fallbackTheme,
+  normalizeColor,
+  isLight,
   enabled,
   hostClass,
 };

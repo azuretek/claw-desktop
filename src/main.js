@@ -35,6 +35,12 @@ let quitting = false;
 let showingError = false;
 let saveTimer = null;
 
+// The colours the app paints for itself, tracking whichever theme the Control
+// UI is in. Seeded from the last run so a cold start opens in the right ones
+// rather than flashing the wrong palette for as long as the gateway takes to
+// answer — which, over Tailscale to a sleeping box, is not a flash.
+let currentTheme = chrome.fallbackTheme(config.get().themeMode);
+
 /* ------------------------------------------------------------------ helpers */
 
 function originOf(url) {
@@ -295,7 +301,7 @@ function attachNavigationGuards(wc) {
           height: 800,
           minWidth: defaults.minWindow.width,
           minHeight: defaults.minWindow.height,
-          backgroundColor: '#0a0a0a',
+          backgroundColor: currentTheme.surface,
           autoHideMenuBar: true,
           webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false, sandbox: true },
         },
@@ -339,11 +345,11 @@ function createMainWindow() {
 
   mainWindow = new BrowserWindow({
     ...restoredBounds(),
-    ...chrome.windowOptions(),
+    ...chrome.windowOptions(currentTheme),
     minWidth: defaults.minWindow.width,
     minHeight: defaults.minWindow.height,
     show: false,
-    backgroundColor: '#0a0a0a',
+    backgroundColor: currentTheme.surface,
     autoHideMenuBar: true,
     title: 'Claw Desktop',
     icon: process.platform === 'linux' ? path.join(ASSETS, 'icon.png') : undefined,
@@ -429,6 +435,26 @@ function toggleMainWindow() {
   showMainWindow();
 }
 
+/* --------------------------------------------------------------------- theme */
+
+// Adopt a theme reported by the page and repaint everything the page's own
+// stylesheet cannot reach. Persisting the mode is what makes the *next* cold
+// start open in the right colours; only the mode is kept, because the exact
+// surface belongs to whichever palette is live and re-arrives within a frame of
+// the page loading.
+function adoptTheme(theme) {
+  if (!theme) return;
+  const changed = theme.surface !== currentTheme.surface
+    || theme.symbol !== currentTheme.symbol
+    || theme.mode !== currentTheme.mode;
+  if (!changed) return;
+
+  const modeChanged = theme.mode !== currentTheme.mode;
+  currentTheme = theme;
+  chrome.applyTheme(currentTheme, [mainWindow, settingsWindow]);
+  if (modeChanged) config.update({ themeMode: theme.mode });
+}
+
 /* ---------------------------------------------------------- settings window */
 
 function openSettings(opts = {}) {
@@ -446,9 +472,9 @@ function openSettings(opts = {}) {
     // the system accent colour whenever the window is active — a pale blue strip
     // above a dark page, regardless of nativeTheme, because that is a
     // personalisation setting and not something an app can opt out of.
-    ...chrome.windowOptions(),
+    ...chrome.windowOptions(currentTheme),
     title: opts.firstRun ? 'Connect to a gateway' : 'Claw Desktop Settings',
-    backgroundColor: '#0a0a0a',
+    backgroundColor: currentTheme.surface,
     autoHideMenuBar: true,
     parent: opts.firstRun ? undefined : (mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined),
     show: false,
@@ -728,6 +754,15 @@ function registerIpc() {
   });
   ipcMain.handle('app:retry', () => { loadActiveGateway(); });
   ipcMain.handle('app:open-settings', () => { openSettings(); });
+
+  // Sent by the preload of every window, including remote gateway pages. Only
+  // the main window drives the app's colours: a popup showing a different page
+  // must not repaint the window the user is actually looking at.
+  ipcMain.on('chrome:theme', (event, report) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (event.sender !== mainWindow.webContents) return;
+    adoptTheme(chrome.themeFromReport(report));
+  });
 }
 
 /* ------------------------------------------------------------------ startup */
@@ -742,7 +777,7 @@ if (!app.requestSingleInstanceLock()) {
 
     // The default session only ever serves our own file:// pages; the gateway
     // itself loads in a per-gateway partition configured by createMainWindow.
-    chrome.applyTheme();
+    chrome.applyTheme(currentTheme);
     configureSession(session.defaultSession, null);
     certs.install(app, () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null));
 

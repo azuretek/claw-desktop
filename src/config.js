@@ -24,6 +24,10 @@ function blank() {
     closeToTray: true,
     launchAtLogin: false,
     startHidden: false,
+    // "light" | "dark" | null — the Control UI's theme as of the last run, so a
+    // cold start opens its windows in the right colours before the gateway has
+    // answered. Learned, never configured; see adoptTheme in src/main.js.
+    themeMode: null,
     // host -> "sha256/BASE64", pinned on first accept. See src/certs.js.
     trustedCerts: {},
   };
