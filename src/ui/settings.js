@@ -318,6 +318,7 @@ $('save').addEventListener('click', async () => {
 
 (async () => {
   state = await api.getState();
+  if (state.frameless) document.body.classList.add('frameless');
   if (firstRun) {
     $('title').textContent = 'Connect to a gateway';
     $('subtitle').textContent = 'Pick the OpenClaw gateway this app should open, or add your own.';

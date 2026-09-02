@@ -363,6 +363,17 @@ function createMainWindow() {
   const wc = mainWindow.webContents;
   attachNavigationGuards(wc);
 
+  // The Control UI sets document.title to "<session> — OpenClaw", and Electron
+  // mirrors a page title onto the window by default. That put the upstream name
+  // in our taskbar entry and window title even after the rename, which is the
+  // one place a user actually reads it. Keep the page's session name — it is
+  // genuinely useful when several windows are open — but under our own name.
+  mainWindow.on('page-title-updated', (event, title) => {
+    event.preventDefault();
+    const session = title.replace(/\s*[—-]\s*OpenClaw\s*$/, '').trim();
+    mainWindow.setTitle(session && session !== title ? `${session} — Claw Desktop` : 'Claw Desktop');
+  });
+
   wc.on('did-finish-load', () => {
     wc.setZoomLevel(config.get().zoomLevel || 0);
     chrome.applyToPage(wc);
@@ -431,6 +442,11 @@ function openSettings(opts = {}) {
     height: 660,
     minWidth: 560,
     minHeight: 480,
+    // Same treatment as the main window. Without it Windows paints this bar in
+    // the system accent colour whenever the window is active — a pale blue strip
+    // above a dark page, regardless of nativeTheme, because that is a
+    // personalisation setting and not something an app can opt out of.
+    ...chrome.windowOptions(),
     title: opts.firstRun ? 'Connect to a gateway' : 'Claw Desktop Settings',
     backgroundColor: '#0a0a0a',
     autoHideMenuBar: true,
@@ -637,6 +653,7 @@ function currentState() {
     gateways: cfg.gateways.map((g) => ({ ...g, credentials: secrets.summary(g.id) })),
     activeGatewayId: cfg.activeGatewayId,
     secretsAvailable: secrets.available(),
+    frameless: chrome.enabled(),
     secretsError: secrets.unavailableReason(),
     settings: {
       globalShortcut: cfg.globalShortcut,

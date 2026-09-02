@@ -103,6 +103,10 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 22px 0 0; }
   -webkit-app-region: drag; app-region: drag;
 }
 .dragbar ~ * button { -webkit-app-region: no-drag; app-region: no-drag; }
+/* Only reserve space where the frame is actually hidden; Linux keeps its
+   own title bar and would otherwise get a 50px gap for nothing. */
+body.frameless { padding-top: 62px; }
+body.frameless .center { height: calc(100% - 62px); }
 
 /* error page */
 .center { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; text-align: center; padding: 0 40px; }
