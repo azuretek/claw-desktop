@@ -201,3 +201,95 @@ test('windows opened before the page answers use the remembered mode', () => {
   assert.strictEqual(chrome.fallbackTheme('dark').mode, 'dark');
   assert.strictEqual(chrome.fallbackTheme(null).mode, 'dark', 'first ever run defaults dark');
 });
+
+/* ------------------------------------------------------------ theme tokens */
+
+// These values are injected as CSS into a file:// page that holds the
+// privileged IPC bridge. A gateway that could smuggle text into one would have
+// a stylesheet-injection primitive against the settings page.
+
+test('every borrowed token declares a type, which is what makes it checkable', () => {
+  const kinds = new Set(['color', 'length', 'font', 'shadow']);
+  assert.ok(chrome.THEME_TOKENS.length > 0);
+  for (const entry of chrome.THEME_TOKENS) {
+    const [name, kind] = entry;
+    assert.match(name, /^--[a-z0-9-]+$/, `${name} must be a custom property name`);
+    assert.ok(kinds.has(kind), `${name} declares unknown type ${kind}`);
+  }
+  // The four the scrollbars need, or ours only resemble the Control UI's.
+  const names = chrome.THEME_TOKENS.map(([n]) => n);
+  for (const n of ['--scrollbar-size', '--scrollbar-thumb', '--scrollbar-thumb-hover', '--scrollbar-thumb-inset']) {
+    assert.ok(names.includes(n), `${n} must be borrowed`);
+  }
+});
+
+test('resolved values in the forms Chromium actually returns are kept', () => {
+  assert.strictEqual(chrome.sanitizeTokenValue('color', 'rgb(250, 249, 245)'), 'rgb(250, 249, 245)');
+  assert.strictEqual(chrome.sanitizeTokenValue('color', 'rgba(138, 138, 138, 0.32)'), 'rgba(138, 138, 138, 0.32)');
+  // color-mix() resolves to one of these depending on the source colour space.
+  assert.strictEqual(chrome.sanitizeTokenValue('color', 'color(srgb 0.98 0.976 0.961)'), 'color(srgb 0.98 0.976 0.961)');
+  assert.strictEqual(chrome.sanitizeTokenValue('color', 'oklch(0.72 0.12 40)'), 'oklch(0.72 0.12 40)');
+  assert.strictEqual(chrome.sanitizeTokenValue('length', '12px'), '12px');
+  assert.strictEqual(chrome.sanitizeTokenValue('length', '9999px'), '9999px');
+  assert.strictEqual(chrome.sanitizeTokenValue('font', '"Instrument Sans", -apple-system, sans-serif'),
+    '"Instrument Sans", -apple-system, sans-serif');
+  assert.strictEqual(chrome.sanitizeTokenValue('shadow', 'rgba(0, 0, 0, 0.55) 0px 24px 60px 0px'),
+    'rgba(0, 0, 0, 0.55) 0px 24px 60px 0px');
+});
+
+test('nothing that could close a CSS rule survives', () => {
+  const attacks = [
+    'red} body{display:none} .x{color:red',   // escape the rule entirely
+    'red; background: url(http://evil/)',      // smuggle a second declaration
+    'url(http://evil/pixel.png)',              // exfiltrate by fetching
+    'rgb(0,0,0) /* } */',                      // comment-splice out of the value
+    'rgb(0,0,0))',                             // unbalanced parens
+    'expression(alert(1))',
+    '<script>',
+  ];
+  for (const kind of ['color', 'length', 'font', 'shadow']) {
+    for (const value of attacks) {
+      assert.strictEqual(chrome.sanitizeTokenValue(kind, value), null, `${kind} accepted: ${value}`);
+    }
+  }
+  // A length is a length, not a colour, and vice versa — types are not advisory.
+  assert.strictEqual(chrome.sanitizeTokenValue('length', 'rgb(1,2,3)'), null);
+  assert.strictEqual(chrome.sanitizeTokenValue('color', '12px'), null);
+  // Unbounded values are refused rather than truncated.
+  assert.strictEqual(chrome.sanitizeTokenValue('font', 'a'.repeat(400)), null);
+});
+
+test('only whitelisted token names are carried, whatever the page sends', () => {
+  const tokens = chrome.sanitizeTokens({
+    '--bg': 'rgb(250, 249, 245)',
+    '--radius': '10px',
+    '--not-a-real-token': 'rgb(0, 0, 0)',
+    '--bg-hover': 'red} body{display:none',
+  });
+  assert.strictEqual(tokens['--bg'], 'rgb(250, 249, 245)');
+  assert.strictEqual(tokens['--radius'], '10px');
+  assert.ok(!('--not-a-real-token' in tokens), 'unlisted names must be dropped');
+  assert.ok(!('--bg-hover' in tokens), 'a listed name with a bad value must be dropped, not repaired');
+  assert.deepStrictEqual(chrome.sanitizeTokens(null), {});
+});
+
+test('the injected sheet is a single :root rule and nothing else', () => {
+  const theme = chrome.themeFromReport({
+    mode: 'light',
+    surface: 'rgb(250, 249, 245)',
+    tokens: { '--bg': 'rgb(250, 249, 245)', '--scrollbar-size': '12px' },
+  });
+  const css = chrome.themeCss(theme);
+  assert.match(css, /^:root \{/);
+  assert.ok(css.includes('--bg: rgb(250, 249, 245) !important;'));
+  assert.ok(css.includes('--scrollbar-size: 12px !important;'));
+  // ui.css declares every one of these as a literal fallback, and those would
+  // win on source order without the flag.
+  assert.strictEqual((css.match(/!important/g) || []).length, 2);
+  assert.strictEqual((css.match(/\{/g) || []).length, 1, 'exactly one rule may be emitted');
+
+  // No tokens means no stylesheet at all, so a themeless page is left with its
+  // own palette rather than an empty rule.
+  assert.strictEqual(chrome.themeCss(chrome.fallbackTheme('dark')), '');
+  assert.strictEqual(chrome.themeCss(null), '');
+});

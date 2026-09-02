@@ -25,6 +25,7 @@ if (isLocalPage) {
     saveSettings: (patch) => ipcRenderer.invoke('app:save-settings', patch),
     retry: () => ipcRenderer.invoke('app:retry'),
     openSettings: () => ipcRenderer.invoke('app:open-settings'),
+    closeSettings: () => ipcRenderer.invoke('app:close-settings'),
   });
 }
 
@@ -44,21 +45,60 @@ if (isLocalPage) {
 // the raw token exactly as authored, so a theme written in `oklch()` would
 // arrive as a string nothing in the main process can parse. Assigning it to a
 // real property and reading the *computed* value makes the engine do the
-// conversion, and it always answers in `rgb()`.
+// conversion, and it always answers in a resolved form.
+
+// Which CSS property each token type is resolved through, and the fallback that
+// proves absence. A token the theme does not define makes `var()` fall back —
+// and without a sentinel the property would quietly land on its inherited or
+// initial value, which for a colour is a perfectly plausible-looking answer
+// that is not the token. Anything coming back equal to the sentinel is dropped.
+const RESOLVE = {
+  color: { prop: 'color', read: 'color', absent: 'rgb(1, 2, 3)' },
+  length: { prop: 'width', read: 'width', absent: '31337px' },
+  font: { prop: 'fontFamily', read: 'fontFamily', absent: '__claw_absent__' },
+  shadow: { prop: 'boxShadow', read: 'boxShadow', absent: '0px 0px 0px rgb(1, 2, 3)' },
+};
+
+// The token list lives in src/chrome.js, which a sandboxed preload cannot
+// require. Asking for it once per page keeps a single owner rather than a copy
+// here that drifts the first time the list changes.
+let tokenSpec = null;
+function tokenSpecOnce() {
+  if (tokenSpec) return tokenSpec;
+  try {
+    tokenSpec = ipcRenderer.sendSync('chrome:token-spec') || [];
+  } catch {
+    tokenSpec = [];
+  }
+  return tokenSpec;
+}
+
 function readTheme() {
   const root = document.documentElement;
   const probe = document.createElement('span');
   probe.setAttribute('aria-hidden', 'true');
   probe.style.cssText =
-    'position:fixed;top:-9999px;left:-9999px;width:0;height:0;'
-    + 'pointer-events:none;background-color:var(--bg);color:var(--text)';
+    'position:fixed;top:-9999px;left:-9999px;height:0;pointer-events:none;'
+    + 'background-color:var(--bg);color:var(--text)';
   root.appendChild(probe);
   const computed = getComputedStyle(probe);
+
   const report = {
     mode: root.getAttribute('data-theme-mode'),
     surface: computed.backgroundColor,
     symbol: computed.color,
+    tokens: {},
   };
+
+  for (const [name, kind] of tokenSpecOnce()) {
+    const spec = RESOLVE[kind];
+    if (!spec) continue;
+    probe.style[spec.prop] = `var(${name}, ${spec.absent})`;
+    const value = computed[spec.read];
+    probe.style[spec.prop] = '';
+    if (value && value !== spec.absent) report.tokens[name] = value;
+  }
+
   probe.remove();
   return report;
 }

@@ -1,8 +1,16 @@
 'use strict';
 
 const api = window.clawDesktop;
-const firstRun = new URLSearchParams(location.search).has('firstRun');
+const params = new URLSearchParams(location.search);
+const firstRun = params.has('firstRun');
 const $ = (id) => document.getElementById(id);
+
+// Applied before first paint, from the URL rather than from getState(), because
+// these decide where the card sits and whether it is a dialog or the window
+// itself. Fetched over IPC they land after the first frame and the card jumps.
+// (This script is the last element in <body>, so document.body exists.)
+if (params.has('frameless')) document.body.classList.add('frameless');
+if (firstRun) document.body.classList.add('first-run');
 
 let state = null;
 // Which gateway's credential editor is open. Kept across re-renders so saving a
@@ -314,15 +322,36 @@ $('save').addEventListener('click', async () => {
   render();
 });
 
+/* ----------------------------------------------------------------- dismiss */
+
+// Only dismissable as a modal. On a first run this page IS the window — there
+// is nothing behind it to go back to, and an Escape key that emptied the window
+// would leave the app running with a blank frame and no way to pick a gateway.
+if (!firstRun) {
+  const dismiss = () => api.closeSettings();
+  $('close').addEventListener('click', dismiss);
+  // Only a click that both starts and ends on the scrim counts. Without the
+  // target check, releasing the mouse outside the card after selecting text
+  // inside it closes the dialog and throws away what you were doing.
+  $('scrim').addEventListener('mousedown', (e) => {
+    if (e.target !== e.currentTarget) return;
+    const up = (ev) => { if (ev.target === e.currentTarget) dismiss(); };
+    $('scrim').addEventListener('mouseup', up, { once: true });
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') dismiss();
+  });
+}
+
 /* -------------------------------------------------------------------- boot */
 
 (async () => {
   state = await api.getState();
-  if (state.frameless) document.body.classList.add('frameless');
   if (firstRun) {
     $('title').textContent = 'Connect to a gateway';
     $('subtitle').textContent = 'Pick the OpenClaw gateway this app should open, or add your own.';
     $('prefs').hidden = true;
+    $('close').hidden = true;
   } else {
     $('prefs').hidden = false;
   }

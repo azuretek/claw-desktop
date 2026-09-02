@@ -8,10 +8,25 @@
   <link rel="stylesheet" href="ui.css">
 </head>
 <body>
-  <!-- Drag region for the frameless window; see src/chrome.js. -->
-  <div class="dragbar"></div>
-  <h1 id="title">Settings</h1>
-  <p class="sub" id="subtitle">Choose which gateway this app connects to.</p>
+  <!-- The page fills the window in both of its homes: as a transparent overlay
+       view on top of the Control UI, and as the main window's own content on a
+       first run, when there is no gateway to overlay. The scrim renders as a
+       dim wash in the first case and as a plain themed background in the
+       second; the card is identical either way. See openSettings in main.js. -->
+  <div class="scrim" id="scrim">
+    <!-- A slim draggable band at the top edge. The rest of the scrim is a
+         dismiss target, and a drag region swallows the click that would need —
+         so the window stays movable without costing click-outside-to-close. -->
+    <div class="dragbar"></div>
+    <div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="title">
+      <header class="modal__header">
+        <div class="stack">
+          <h1 id="title">Settings</h1>
+          <p class="sub" id="subtitle">Choose which gateway this app connects to.</p>
+        </div>
+        <button class="modal__close" id="close" type="button" aria-label="Close settings" title="Close (Esc)">&#10005;</button>
+      </header>
+      <div class="modal__body">
 
   <h2>Gateways</h2>
   <div id="gateways"></div>
@@ -74,6 +89,10 @@
     <hr>
     <p class="muted-sm" id="about"></p>
   </section>
+
+      </div>
+    </div>
+  </div>
 
   <script src="settings.js"></script>
 </body>

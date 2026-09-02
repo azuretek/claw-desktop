@@ -1,7 +1,7 @@
 'use strict';
 
 const {
-  app, BrowserWindow, Tray, Menu, MenuItem, shell, dialog,
+  app, BrowserWindow, WebContentsView, Tray, Menu, MenuItem, shell, dialog,
   globalShortcut, nativeImage, ipcMain, screen, session,
 } = require('electron');
 const path = require('node:path');
@@ -29,11 +29,23 @@ const PRELOAD = path.join(__dirname, 'preload.js');
 }
 
 let mainWindow = null;
-let settingsWindow = null;
+// Settings is a view layered over the main window's contents, not a window of
+// its own. It stays a separate WebContents on purpose: the page holds the
+// privileged IPC bridge, and the preload grants that bridge only to `file://`
+// pages, so hosting it inside the gateway's document would mean handing remote
+// content the ability to rewrite gateway settings and read pinned fingerprints.
+// A child view keeps the modal *look* without giving up that boundary.
+let settingsView = null;
+// True while the main window is showing the settings page directly, which is
+// the first run: there is no gateway to lay a modal over yet.
+let settingsIsPage = false;
 let tray = null;
 let quitting = false;
 let showingError = false;
 let saveTimer = null;
+// Inserted-stylesheet keys, per WebContents id, so a theme change can replace
+// the sheet it wrote rather than stacking a second one on top.
+const themeCssKeys = new Map();
 
 // The colours the app paints for itself, tracking whichever theme the Control
 // UI is in. Seeded from the last run so a cold start opens in the right ones
@@ -177,6 +189,7 @@ function applyHeaders(ses) {
 function showError(detail) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   showingError = true;
+  settingsIsPage = false;
   const gw = config.activeGateway();
   const params = new URLSearchParams({
     code: String(detail.errorCode ?? ''),
@@ -212,10 +225,18 @@ function withTokenHandoff(rawUrl, token) {
 function loadActiveGateway() {
   const gw = config.activeGateway();
   if (!gw) {
+    // Nothing to lay a modal over, so settings *is* the window's content. Also
+    // the only thing that makes the window paintable at all on a first run:
+    // `ready-to-show` never fires for a window that was never asked to load
+    // anything, so without this the app would sit in the tray, invisible.
     showingError = false;
-    return openSettings({ firstRun: true });
+    settingsIsPage = true;
+    closeSettings();
+    mainWindow.loadFile(path.join(UI_DIR, 'settings.html'), { search: settingsSearch({ firstRun: true }) });
+    return null;
   }
   showingError = false;
+  settingsIsPage = false;
   autofilled = false;
   const creds = secrets.load(gw.id);
   const supplied = [creds.token && 'token', creds.password && 'password', creds.headers.length && `${creds.headers.length} header(s)`]
@@ -320,8 +341,13 @@ function attachNavigationGuards(wc) {
     if (/^https?:/.test(url)) shell.openExternal(url);
   });
 
-  // Electron ships no default context menu; without this you cannot even
-  // right-click → Paste into the composer.
+  attachContextMenu(wc);
+}
+
+// Electron ships no default context menu; without this you cannot even
+// right-click → Paste into the composer, or into the settings page's token and
+// URL fields — which is the one place a paste is genuinely likely.
+function attachContextMenu(wc) {
   wc.on('context-menu', (_event, props) => {
     const menu = new Menu();
     const { editFlags, isEditable, selectionText } = props;
@@ -384,6 +410,14 @@ function createMainWindow() {
 
   wc.on('did-finish-load', () => {
     wc.setZoomLevel(config.get().zoomLevel || 0);
+    // Our own pages (first-run settings, the error page) want the Control UI's
+    // tokens, not its native-host marker class — that class exists to make the
+    // *UI's* header behave like a title bar, and these pages have no such
+    // header. The drag region they need is their own `.dragbar`.
+    if (wc.getURL().startsWith('file://')) {
+      applyThemeCss(wc);
+      return;
+    }
     chrome.applyToPage(wc);
     maybeAutofill(wc);
   });
@@ -398,10 +432,18 @@ function createMainWindow() {
     showError({ errorCode: details.reason, errorDescription: `The window stopped responding (${details.reason}).` });
   });
 
-  mainWindow.on('resize', schedulePersist);
+  // The overlay is positioned in pixels, so every one of these has to move it —
+  // a child view does not track its parent's size on its own, and one missed
+  // event leaves the modal covering part of the window or floating in a corner.
+  const trackOverlay = () => {
+    if (settingsView && mainWindow && !mainWindow.isDestroyed()) settingsView.setBounds(overlayBounds());
+  };
+  mainWindow.on('resize', () => { trackOverlay(); schedulePersist(); });
   mainWindow.on('move', schedulePersist);
-  mainWindow.on('maximize', schedulePersist);
-  mainWindow.on('unmaximize', schedulePersist);
+  mainWindow.on('maximize', () => { trackOverlay(); schedulePersist(); });
+  mainWindow.on('unmaximize', () => { trackOverlay(); schedulePersist(); });
+  mainWindow.on('enter-full-screen', trackOverlay);
+  mainWindow.on('leave-full-screen', trackOverlay);
 
   mainWindow.on('close', (event) => {
     persistBounds();
@@ -446,48 +488,118 @@ function toggleMainWindow() {
 // the page loading.
 function adoptTheme(theme) {
   if (!theme) return;
+  // Tokens are part of the comparison, not just the caption colours: two
+  // palettes can share a `--bg` and differ everywhere else, and if that
+  // difference is dropped here the settings page keeps the old theme's borders
+  // and accents until something unrelated forces a repaint.
   const changed = theme.surface !== currentTheme.surface
     || theme.symbol !== currentTheme.symbol
-    || theme.mode !== currentTheme.mode;
+    || theme.mode !== currentTheme.mode
+    || JSON.stringify(theme.tokens) !== JSON.stringify(currentTheme.tokens);
   if (!changed) return;
 
   const modeChanged = theme.mode !== currentTheme.mode;
+  console.log(`[claw] theme: ${theme.mode} ${theme.surface} (${Object.keys(theme.tokens).length} tokens)`);
   currentTheme = theme;
-  chrome.applyTheme(currentTheme, [mainWindow, settingsWindow]);
+  chrome.applyTheme(currentTheme, [mainWindow]);
+  refreshThemedPages();
   if (modeChanged) config.update({ themeMode: theme.mode });
 }
 
 /* ---------------------------------------------------------- settings window */
 
+// The overlay covers the whole content area, not just the card: the scrim and
+// the click-outside-to-dismiss target are drawn by the page, so the page needs
+// the full area to draw them on.
+function overlayBounds() {
+  const [width, height] = mainWindow.getContentSize();
+  return { x: 0, y: 0, width, height };
+}
+
+// `frameless` rides in the URL rather than being fetched over IPC because the
+// page uses it for layout — how far down the card starts, to clear the drag
+// band. Asked for asynchronously it arrives after first paint, and the card
+// visibly jumps on every open.
+function settingsSearch(opts = {}) {
+  const params = new URLSearchParams();
+  if (opts.firstRun) params.set('firstRun', '1');
+  if (chrome.enabled()) params.set('frameless', '1');
+  return `?${params}`;
+}
+
 function openSettings(opts = {}) {
-  if (settingsWindow && !settingsWindow.isDestroyed()) {
-    settingsWindow.show();
-    settingsWindow.focus();
-    return settingsWindow;
+  if (!mainWindow || mainWindow.isDestroyed()) return null;
+  // On first run the main window is already showing this page full-size; a
+  // modal of the same thing over the top of itself is not an improvement.
+  if (settingsIsPage) {
+    showMainWindow();
+    return null;
   }
-  settingsWindow = new BrowserWindow({
-    width: 720,
-    height: 660,
-    minWidth: 560,
-    minHeight: 480,
-    // Same treatment as the main window. Without it Windows paints this bar in
-    // the system accent colour whenever the window is active — a pale blue strip
-    // above a dark page, regardless of nativeTheme, because that is a
-    // personalisation setting and not something an app can opt out of.
-    ...chrome.windowOptions(currentTheme),
-    title: opts.firstRun ? 'Connect to a gateway' : 'Claw Desktop Settings',
-    backgroundColor: currentTheme.surface,
-    autoHideMenuBar: true,
-    parent: opts.firstRun ? undefined : (mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined),
-    show: false,
+  if (settingsView) {
+    settingsView.webContents.focus();
+    return settingsView;
+  }
+
+  settingsView = new WebContentsView({
     webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
-  settingsWindow.loadFile(path.join(UI_DIR, 'settings.html'), {
-    search: opts.firstRun ? '?firstRun=1' : '',
+  // Transparent, so the translucent scrim the page paints actually reveals the
+  // Control UI underneath instead of a black rectangle. A view added to a
+  // window is opaque until told otherwise.
+  settingsView.setBackgroundColor('#00000000');
+
+  const wc = settingsView.webContents;
+  attachContextMenu(wc);
+  mainWindow.contentView.addChildView(settingsView);
+  settingsView.setBounds(overlayBounds());
+  wc.loadFile(path.join(UI_DIR, 'settings.html'), { search: settingsSearch() });
+  wc.once('did-finish-load', () => {
+    applyThemeCss(wc);
+    wc.focus();
   });
-  settingsWindow.once('ready-to-show', () => settingsWindow.show());
-  settingsWindow.on('closed', () => { settingsWindow = null; });
-  return settingsWindow;
+  return settingsView;
+}
+
+function closeSettings() {
+  if (!settingsView) return;
+  const view = settingsView;
+  settingsView = null;
+  themeCssKeys.delete(view.webContents.id);
+  try {
+    mainWindow?.contentView.removeChildView(view);
+  } catch { /* window already gone; the view goes with it */ }
+  view.webContents.close();
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.focus();
+}
+
+/**
+ * Give one of the app's own pages the Control UI's live design tokens.
+ *
+ * This is what makes settings look like part of the UI rather than beside it:
+ * surfaces, borders, radii and the scrollbar tokens all come from whichever
+ * palette the UI is actually running. ui.css declares a full fallback set, so a
+ * page that loads before any theme has been reported — the first run — is
+ * styled, just not matched.
+ */
+async function applyThemeCss(wc) {
+  if (!wc || wc.isDestroyed()) return;
+  const css = chrome.themeCss(currentTheme);
+  try {
+    const previous = themeCssKeys.get(wc.id);
+    if (previous) {
+      themeCssKeys.delete(wc.id);
+      await wc.removeInsertedCSS(previous);
+    }
+    if (css) themeCssKeys.set(wc.id, await wc.insertCSS(css));
+  } catch { /* the page keeps ui.css's own palette */ }
+}
+
+/** Re-theme every page of ours that is currently on screen. */
+function refreshThemedPages() {
+  if (settingsView && !settingsView.webContents.isDestroyed()) applyThemeCss(settingsView.webContents);
+  if ((settingsIsPage || showingError) && mainWindow && !mainWindow.isDestroyed()) {
+    applyThemeCss(mainWindow.webContents);
+  }
 }
 
 /* ---------------------------------------------------------------- zoom/menu */
@@ -744,7 +856,7 @@ function registerIpc() {
   });
   ipcMain.handle('app:connect', (_e, id) => {
     switchGateway(id);
-    if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.close();
+    closeSettings();
     return currentState();
   });
   ipcMain.handle('app:save-settings', (_e, patch) => {
@@ -756,6 +868,12 @@ function registerIpc() {
   });
   ipcMain.handle('app:retry', () => { loadActiveGateway(); });
   ipcMain.handle('app:open-settings', () => { openSettings(); });
+  ipcMain.handle('app:close-settings', () => { closeSettings(); });
+
+  // Synchronous, and only because the caller is a sandboxed preload that cannot
+  // require src/chrome.js. Serving the list from its one owner beats keeping a
+  // second copy in the preload that silently drifts the first time it changes.
+  ipcMain.on('chrome:token-spec', (event) => { event.returnValue = chrome.THEME_TOKENS; });
 
   // Sent by the preload of every window, including remote gateway pages. Only
   // the main window drives the app's colours: a popup showing a different page
@@ -763,6 +881,12 @@ function registerIpc() {
   ipcMain.on('chrome:theme', (event, report) => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     if (event.sender !== mainWindow.webContents) return;
+    // The app's theme comes from the Control UI, never from one of our own
+    // pages. Without this the first run — where the settings page *is* the main
+    // window's content — would have the app take its colours from the very
+    // stylesheet it is supposed to be theming, and the settings page would end
+    // up quoting itself back.
+    if (!/^https?:/.test(event.sender.getURL())) return;
     adoptTheme(chrome.themeFromReport(report));
   });
 }

@@ -203,6 +203,132 @@ function applyToPage(wc) {
 // without being parsed into a known-good `#rrggbb` first.
 
 /**
+ * The Control UI design tokens the app's own pages borrow, so settings and the
+ * error page are styled by the *same* values as the UI they sit in front of
+ * rather than by a hand-matched approximation that drifts every release.
+ *
+ * Each token declares its type, and that is the security mechanism, not a
+ * convenience. These values are injected as CSS into a `file://` page that
+ * holds the privileged IPC bridge, so a gateway that could put arbitrary text
+ * in one would have a stylesheet-injection primitive against it — `--bg: red}
+ * body{display:none` and the settings page is a blank sheet with live buttons
+ * underneath. Declaring the type lets the page resolve each token to a computed
+ * value (colours to `rgb()`, lengths to `px`) and lets the main process then
+ * hold it to a narrow grammar. Nothing with a brace, a semicolon or a `url()`
+ * can survive that round trip.
+ *
+ * Names are upstream's, taken from `dist/control-ui/themes/*.css` and the core
+ * bundle. Tokens the UI does not define simply resolve to nothing and are
+ * dropped, so this list may safely name more than any one theme provides.
+ */
+const THEME_TOKENS = [
+  // Surfaces
+  ['--bg', 'color'], ['--bg-accent', 'color'], ['--bg-hover', 'color'],
+  ['--bg-muted', 'color'], ['--bg-content', 'color'],
+  ['--panel', 'color'], ['--panel-hover', 'color'], ['--panel-strong', 'color'],
+  ['--input', 'color'], ['--chrome', 'color'],
+  // Text
+  ['--text', 'color'], ['--text-strong', 'color'],
+  ['--muted', 'color'], ['--muted-strong', 'color'],
+  // Lines
+  ['--border', 'color'], ['--border-strong', 'color'], ['--border-hover', 'color'],
+  // Accent
+  ['--accent', 'color'], ['--accent-hover', 'color'], ['--accent-subtle', 'color'],
+  ['--primary', 'color'], ['--primary-hover', 'color'], ['--primary-foreground', 'color'],
+  ['--destructive', 'color'], ['--ring', 'color'],
+  // Shape
+  ['--radius', 'length'], ['--radius-sm', 'length'], ['--radius-md', 'length'],
+  ['--radius-lg', 'length'], ['--radius-full', 'length'],
+  // Scrollbars — the reason our scrollbars can match rather than resemble.
+  ['--scrollbar-size', 'length'], ['--scrollbar-thumb-inset', 'length'],
+  ['--scrollbar-thumb', 'color'], ['--scrollbar-thumb-hover', 'color'],
+  // Type and depth
+  ['--font-body', 'font'], ['--shadow-lg', 'shadow'],
+];
+
+// Grammars for a *computed* value. Deliberately narrow: no braces, no
+// semicolons, no `url()`, no nested parentheses, nothing that can close a rule
+// and open another. A token that does not match is dropped, never repaired.
+const TOKEN_GRAMMAR = {
+  // `#abc`, `rgb(…)`, `rgba(…)`, and the `color(srgb …)`/`oklab(…)`/`oklch(…)`
+  // forms Chromium may resolve `color-mix()` into. Inner text is digits and
+  // separators only.
+  color: /^(#[0-9a-f]{3,8}|(?:rgba?|oklab|oklch|lab|lch|hwb)\([a-z0-9.,\s%/+-]*\)|color\(srgb[a-z0-9.,\s%/+-]*\))$/i,
+  length: /^-?\d+(?:\.\d+)?(?:px|rem|em|%)?$/,
+  // A resolved font stack: family names, quotes, commas, hyphens. No
+  // parentheses at all, so no function call of any kind can hide in one.
+  font: /^[\w\s"',.-]{1,300}$/,
+};
+
+// The colour forms above, for reuse. A resolved box-shadow is the one token
+// whose value legitimately *contains* colours, so it cannot be a flat character
+// class — spelling one loose enough to admit `rgba(…)` also admits
+// `anything(…)`. Instead the colours are subtracted first and the remainder is
+// held to lengths and keywords, which leaves nowhere for a call to hide.
+const COLOR_FN = /(?:rgba?|oklab|oklch|lab|lch|hwb)\([^()]*\)|color\(srgb[^()]*\)|#[0-9a-f]{3,8}/gi;
+
+function isShadow(value) {
+  const remainder = value.replace(COLOR_FN, ' ');
+  // `inset` and `none` are the only keywords Chromium resolves a shadow into.
+  return /^[\s\d.,a-z%-]*$/i.test(remainder) && !/[()]/.test(remainder);
+}
+
+/**
+ * Hold one reported token to its declared grammar, or reject it.
+ *
+ * Rejection is silent and total — the page keeps its own fallback value, which
+ * is always defined in ui.css. A partly-applied theme is a worse outcome than
+ * an unthemed one.
+ */
+function sanitizeTokenValue(kind, value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 300) return null;
+  // Belt and braces against comment-splicing, which no grammar above admits but
+  // which is the classic way out of a CSS value.
+  if (trimmed.includes('/*') || trimmed.includes('*/')) return null;
+
+  if (kind === 'shadow') {
+    if (!isShadow(trimmed)) return null;
+  } else {
+    const grammar = TOKEN_GRAMMAR[kind];
+    if (!grammar || !grammar.test(trimmed)) return null;
+  }
+  // Unbalanced parentheses would let a value swallow the rest of the rule.
+  const open = (trimmed.match(/\(/g) || []).length;
+  const close = (trimmed.match(/\)/g) || []).length;
+  if (open !== close) return null;
+  return trimmed;
+}
+
+/** Sanitize a whole reported token map, dropping anything that does not fit. */
+function sanitizeTokens(raw) {
+  const out = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const [name, kind] of THEME_TOKENS) {
+    const value = sanitizeTokenValue(kind, raw[name]);
+    if (value !== null) out[name] = value;
+  }
+  return out;
+}
+
+/**
+ * The stylesheet handed to the app's own pages so they inherit the live theme.
+ *
+ * Emitted under `:root` with `!important` deliberately: ui.css declares every
+ * one of these as a fallback so the page is never unstyled, and without the
+ * flag those literals would win on source order once this is inserted.
+ */
+function themeCss(theme) {
+  const tokens = (theme && theme.tokens) || {};
+  const body = Object.entries(tokens)
+    .map(([name, value]) => `  ${name}: ${value} !important;`)
+    .join('\n');
+  if (!body) return '';
+  return `:root {\n${body}\n}\n`;
+}
+
+/**
  * Parse any colour the page can hand back into `#rrggbb`, or null.
  *
  * The probe reports *computed* values, which CSS resolves to `rgb()`/`rgba()`
@@ -278,12 +404,20 @@ function themeFromReport(report) {
   // and it is authoritative in the one case luminance gets wrong: a mid-tone
   // palette that sits either side of the threshold.
   const declared = report.mode === 'light' || report.mode === 'dark' ? report.mode : null;
-  return { mode: declared || (light ? 'light' : 'dark'), surface, symbol };
+  return {
+    mode: declared || (light ? 'light' : 'dark'),
+    surface,
+    symbol,
+    tokens: sanitizeTokens(report.tokens),
+  };
 }
 
 /** The theme to open windows with before any page has reported one. */
 function fallbackTheme(mode) {
-  return mode === 'light' ? { ...FALLBACK_LIGHT } : { ...FALLBACK_DARK };
+  const base = mode === 'light' ? FALLBACK_LIGHT : FALLBACK_DARK;
+  // No tokens: ui.css carries a complete palette of its own for exactly this
+  // case, which is what the first run — no gateway, no page, no theme — uses.
+  return { ...base, tokens: {} };
 }
 
 /**
@@ -327,6 +461,10 @@ module.exports = {
   applyTheme,
   themeFromReport,
   fallbackTheme,
+  themeCss,
+  sanitizeTokenValue,
+  sanitizeTokens,
+  THEME_TOKENS,
   normalizeColor,
   isLight,
   enabled,

@@ -1,45 +1,94 @@
-/* These pages are ours, not the Control UI, so they get none of its themes.
-   They follow it anyway: main.js sets `nativeTheme.themeSource` from whatever
-   the loaded Control UI reports, which is what `prefers-color-scheme` resolves
-   against inside Electron — so the query below tracks the *app's* theme, not
-   the OS's, and no IPC is needed to keep them in step. */
+/* Styles for the app's own pages: the settings modal and the error page.
+ *
+ * Every token below is named exactly as the Control UI names it, because the
+ * main process injects the UI's *live* values over the top (see themeCss in
+ * src/chrome.js) whenever a gateway is loaded. So these declarations are the
+ * fallback, not the design: they have to stand alone on a first run, when no
+ * gateway has been reached and there is no theme to borrow, and they get
+ * overridden the moment one is.
+ *
+ * That is also why the scrollbar rules further down are copied verbatim from
+ * the Control UI rather than approximated — driven by the same four tokens,
+ * they render as the same scrollbar rather than a similar one.
+ */
 :root {
   color-scheme: dark;
+
   --bg: #0a0a0a;
-  --card: #141414;
-  --elevated: #1c1c1c;
-  --hover-bg: #232323;
-  --hover-border: #3a3a3a;
+  --bg-hover: #1c1c1c;
+  --bg-muted: #141414;
+  --panel: #141414;
+  --panel-hover: #1c1c1c;
+  --input: #0a0a0a;
+
   --border: #2a2a2a;
+  --border-strong: #3a3a3a;
+  --border-hover: #3a3a3a;
+
   --text: #e8e8e8;
+  --text-strong: #fff;
   --muted: #8a8a8a;
+
   --accent: #ff4d4d;
-  --accent-dim: #991b1b;
-  --on-accent: #fff;
+  --accent-hover: #ff6b6b;
+  --accent-subtle: rgba(255, 77, 77, .14);
+  --primary: #991b1b;
+  --primary-hover: #b91c1c;
+  --primary-foreground: #fff;
+  --destructive: #d32f2f;
+  --ring: #ff4d4d;
+
+  --radius: 10px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-full: 9999px;
+
+  --scrollbar-size: 12px;
+  --scrollbar-thumb-inset: 3px;
+  --scrollbar-thumb: color-mix(in srgb, var(--muted) 32%, transparent);
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--muted) 64%, transparent);
+
+  --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --shadow-lg: 0 24px 60px rgba(0, 0, 0, .55);
+
+  /* Ours: the Control UI has no equivalent, so these are never overridden. */
   --ok: #3ddc84;
   --warn: #ffb020;
-  --radius: 10px;
+  --scrim: rgba(0, 0, 0, .55);
 }
 
 /* Warm neutrals rather than pure white, to sit beside the Control UI's light
-   palettes without looking like a different application bolted on. Contrast is
-   AA against --bg: --text 11.4:1, --muted 4.7:1, --accent-dim 6.2:1. */
+   palettes without looking like a different application bolted on. Reached via
+   nativeTheme, which main.js sets from the *page's* theme, so this tracks the
+   Control UI rather than the OS. */
 @media (prefers-color-scheme: light) {
   :root {
     color-scheme: light;
     --bg: #faf9f5;
-    --card: #f3f1e9;
-    --elevated: #edeae0;
-    --hover-bg: #e4e0d3;
-    --hover-border: #ada694;
+    --bg-hover: #edeae0;
+    --bg-muted: #f3f1e9;
+    --panel: #f3f1e9;
+    --panel-hover: #e4e0d3;
+    --input: #fff;
     --border: #e3dfd2;
+    --border-strong: #cdc7b6;
+    --border-hover: #ada694;
     --text: #3d3a33;
+    --text-strong: #1f1d1a;
     --muted: #6b655b;
     --accent: #c62828;
-    --accent-dim: #a31d1d;
-    --on-accent: #fff;
+    --accent-hover: #a31d1d;
+    --accent-subtle: rgba(198, 40, 40, .10);
+    --primary: #a31d1d;
+    --primary-hover: #8c1919;
+    --primary-foreground: #fff;
+    --destructive: #c62828;
+    --ring: #c62828;
     --ok: #1d7a45;
     --warn: #8a5a00;
+    --shadow-lg: 0 24px 60px rgba(60, 50, 30, .22);
+    --scrim: rgba(31, 29, 26, .38);
   }
 }
 
@@ -50,13 +99,105 @@ html, body {
   height: 100%;
   background: var(--bg);
   color: var(--text);
-  font: 13px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font: 13px/1.55 var(--font-body);
   -webkit-font-smoothing: antialiased;
 }
 
-body { padding: 22px 24px 32px; overflow-y: auto; }
+/* ------------------------------------------------------------- scrollbars */
 
-h1 { font-size: 17px; margin: 0 0 4px; font-weight: 650; }
+/* Copied from the Control UI's core stylesheet, token for token. Firefox gets
+   the two standard properties; Chromium — which is what actually renders here —
+   gets the ::-webkit- rules, where `background-clip: content-box` over a
+   transparent border is what insets the thumb from the track edge. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+::-webkit-scrollbar { width: var(--scrollbar-size); height: var(--scrollbar-size); }
+::-webkit-scrollbar-track { background: 0 0; }
+::-webkit-scrollbar-corner { background: 0 0; }
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border: var(--scrollbar-thumb-inset) solid transparent;
+  border-radius: var(--radius-full);
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+  background-clip: content-box;
+}
+
+/* ------------------------------------------------------------------ modal */
+
+/* The scrim fills the overlay view, which fills the window. Padding-top clears
+   the drag band below so the card never sits under it — or, on Windows, under
+   the caption buttons the OS draws above the web contents. */
+.scrim {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 58px 24px 24px;
+  background: var(--scrim);
+}
+
+/* First run: this page is the window's whole content, so there is nothing
+   behind to show through and a translucent wash would just look like a bug. */
+body.first-run .scrim { background: var(--bg); }
+
+.modal {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  width: min(720px, 100%);
+  max-height: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+/* Borderless and shadowless when it is the window rather than a dialog in it. */
+body.first-run .modal { border-color: transparent; box-shadow: none; }
+
+.modal__header {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 18px 22px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.modal__header .stack { flex: 1; min-width: 0; }
+.modal__header h1 { margin: 0; }
+.modal__header .sub { margin: 2px 0 0; }
+
+.modal__close {
+  flex: none;
+  width: 28px; height: 28px; padding: 0;
+  display: grid; place-items: center;
+  font-size: 13px; line-height: 1;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  cursor: pointer;
+}
+.modal__close:hover { background: var(--bg-hover); color: var(--text-strong); }
+
+/* The only scrolling region on the page, which is what keeps the header and the
+   card's rounded corners fixed while the content moves. */
+.modal__body {
+  overflow-y: auto;
+  padding: 16px 22px 22px;
+}
+.modal__body > h2:first-child { margin-top: 4px; }
+
+/* ------------------------------------------------------------------- type */
+
+h1 { font-size: 17px; margin: 0 0 4px; font-weight: 650; color: var(--text-strong); }
 h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin: 26px 0 10px; font-weight: 600; }
 p  { margin: 0 0 12px; color: var(--muted); }
 a  { color: var(--accent); }
@@ -64,7 +205,7 @@ a  { color: var(--accent); }
 .sub { color: var(--muted); margin-bottom: 18px; }
 
 .card {
-  background: var(--card);
+  background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 14px 16px;
@@ -76,32 +217,34 @@ a  { color: var(--accent); }
 .grow { flex: 1; min-width: 0; }
 .stack { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 
-.name { font-weight: 600; }
+.name { font-weight: 600; color: var(--text-strong); }
 .url  { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; overflow-wrap: anywhere; }
 
 .badge {
   font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
-  color: var(--ok); border: 1px solid var(--ok); border-radius: 999px; padding: 2px 8px; white-space: nowrap;
+  color: var(--ok); border: 1px solid var(--ok); border-radius: var(--radius-full); padding: 2px 8px; white-space: nowrap;
 }
 
+/* ----------------------------------------------------------------- inputs */
+
 input[type="text"], input[type="url"], input[type="password"] {
-  width: 100%; background: var(--bg); color: var(--text);
-  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font: inherit;
+  width: 100%; background: var(--input); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px; font: inherit;
 }
 input[type="text"]:focus, input[type="url"]:focus, input[type="password"]:focus {
-  outline: none; border-color: var(--accent-dim);
+  outline: none; border-color: var(--ring);
 }
 
 button {
-  background: var(--elevated); color: var(--text); border: 1px solid var(--border);
-  border-radius: 8px; padding: 8px 14px; font: inherit; font-weight: 550; cursor: pointer; white-space: nowrap;
+  background: var(--panel-hover); color: var(--text); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 8px 14px; font: inherit; font-weight: 550; cursor: pointer; white-space: nowrap;
 }
-button:hover:not(:disabled) { border-color: var(--hover-border); background: var(--hover-bg); }
+button:hover:not(:disabled) { border-color: var(--border-hover); background: var(--bg-hover); }
 button:disabled { opacity: .45; cursor: default; }
-button.primary { background: var(--accent-dim); border-color: var(--accent-dim); color: var(--on-accent); }
-button.primary:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); }
+button.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-foreground); }
+button.primary:hover:not(:disabled) { background: var(--primary-hover); border-color: var(--primary-hover); }
 button.ghost { background: transparent; }
-button.danger:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+button.danger:hover:not(:disabled) { border-color: var(--destructive); color: var(--destructive); }
 
 label.check { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; margin-bottom: 12px; }
 label.check input { margin: 3px 0 0; accent-color: var(--accent); }
@@ -113,7 +256,7 @@ label.check .stack span:last-child { color: var(--muted); font-size: 12px; }
 .result { font-size: 12px; margin-top: 8px; min-height: 17px; }
 .result.ok   { color: var(--ok); }
 .result.warn { color: var(--warn); }
-.result.err  { color: var(--accent); }
+.result.err  { color: var(--destructive); }
 
 .muted-sm { color: var(--muted); font-size: 11.5px; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
@@ -127,21 +270,30 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 22px 0 0; }
 .editor .row > input { flex: 1; min-width: 0; }
 .hint { margin-top: 6px; }
 
-/* Drag region for the frameless main window (see src/chrome.js). Only used by
-   error.html; the settings window keeps a normal OS title bar. */
+/* --------------------------------------------------------------- dragbar */
+
+/* Keeps the window movable where the app has taken the title bar away. It sits
+   below the modal in the stacking order (which has z-index: 1) so it never eats
+   a click meant for the card — a drag region swallows mouse-down entirely. */
 .dragbar {
-  position: fixed; top: 0; left: 0; right: 0; height: 50px;
+  position: fixed; top: 0; left: 0; right: 0; height: 50px; z-index: 0;
   -webkit-app-region: drag; app-region: drag;
 }
 .dragbar ~ * button { -webkit-app-region: no-drag; app-region: no-drag; }
-/* Only reserve space where the frame is actually hidden; Linux keeps its
-   own title bar and would otherwise get a 50px gap for nothing. */
-body.frameless { padding-top: 62px; }
-body.frameless .center { height: calc(100% - 62px); }
+/* Only reserve space where the frame is actually hidden; Linux keeps its own
+   title bar and would otherwise get a 50px gap for nothing. The bar itself
+   stays in the DOM regardless — the error page never sets this class and still
+   needs somewhere to grab the window by. */
+body:not(.frameless) .scrim { padding-top: 24px; }
 
-/* error page */
+/* ------------------------------------------------------------- error page */
+
 .center { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; text-align: center; padding: 0 40px; }
 .center img { width: 76px; height: 76px; opacity: .9; margin-bottom: 18px; }
 .center h1 { font-size: 19px; }
 .center .detail { max-width: 480px; }
 .code { color: var(--muted); font-size: 11.5px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin-top: 22px; }
+/* Unchanged from before the modal work: the error page still lays itself out
+   against the body, and the scrim is `position: fixed` so this cannot reach it. */
+body.frameless { padding-top: 62px; }
+body.frameless .center { height: calc(100% - 62px); }
