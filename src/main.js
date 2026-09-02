@@ -496,12 +496,16 @@ function createMainWindow() {
   //
   // The event fires on the view now, not the window, so the title has to be set
   // rather than merely amended: a view's title does not reach the window at all.
-  wc.on('page-title-updated', (_event, title) => {
-    const session = title.replace(/\s*[—-]\s*OpenClaw\s*$/, '').trim();
-    const full = session && session !== title ? `${session} — Claw Desktop` : 'Claw Desktop';
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setTitle(full);
-    setStripLabel(session && session !== title ? session : null);
-  });
+  const refreshTitle = () => {
+    const label = chrome.pageLabel(wc.getTitle(), wc.getURL());
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setTitle(chrome.windowTitle(label));
+    setStripLabel(label);
+  };
+  wc.on('page-title-updated', refreshTitle);
+  // Also on in-page navigation: the label depends on the route, not only on the
+  // title, and the two do not always change together — nor in a fixed order, so
+  // a title-only listener can read the previous URL.
+  wc.on('did-navigate-in-page', refreshTitle);
 
   wc.on('did-finish-load', () => {
     wc.setZoomLevel(config.get().zoomLevel || 0);

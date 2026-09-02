@@ -86,6 +86,54 @@ test('the macOS label inset stays the sum of its parts', () => {
   assert.ok(chrome.MAC_LIGHTS_GAP >= 20, 'the label needs breathing room');
 });
 
+/* ------------------------------------------------------------------- title */
+
+test('every route label comes from the page, except Home', () => {
+  const at = (path) => `https://gw.example/${path}`;
+  // The Control UI titles most routes usefully...
+  assert.strictEqual(chrome.pageLabel('Automations — OpenClaw', at('automations')), 'Automations');
+  assert.strictEqual(chrome.pageLabel('Plugins — OpenClaw', at('settings/plugins')), 'Plugins');
+  assert.strictEqual(
+    chrome.pageLabel('Media curator status check — OpenClaw', at('chat/main/media-curator-abc')),
+    'Media curator status check',
+  );
+  // ...but titles Home with the AGENT ID, so the strip read "main" where the nav
+  // said "Home". Answered from the route, not by rewriting the string: "main" is
+  // a legitimate title elsewhere, and an agent can be named anything.
+  assert.strictEqual(chrome.pageLabel('main — OpenClaw', at('chat/main')), 'Home');
+  assert.strictEqual(chrome.pageLabel('zilla — OpenClaw', at('chat/zilla')), 'Home');
+  assert.strictEqual(chrome.pageLabel('main — OpenClaw', at('chat/main?nav=collapsed')), 'Home');
+  assert.strictEqual(chrome.pageLabel('main — OpenClaw', at('chat/main/')), 'Home');
+});
+
+test('a session called "Home" is still its own session, not the Home route', () => {
+  // The rule is the route, so this must not collapse into the nav entry.
+  assert.strictEqual(
+    chrome.pageLabel('Home — OpenClaw', 'https://gw.example/chat/main/home-a1b2'),
+    'Home',
+  );
+  assert.strictEqual(chrome.isAgentHome('https://gw.example/chat/main/home-a1b2'), false);
+  assert.strictEqual(chrome.isAgentHome('https://gw.example/chat/main'), true);
+  assert.strictEqual(chrome.isAgentHome('https://gw.example/automations'), false);
+  assert.strictEqual(chrome.isAgentHome('not a url'), false);
+});
+
+test('a title the Control UI did not write is not trusted', () => {
+  // Our own file:// pages set their own titles, and a gateway may set any it
+  // likes; neither should end up in the window title.
+  assert.strictEqual(chrome.pageLabel('Claw Desktop Settings', 'file:///x/settings.html'), null);
+  assert.strictEqual(chrome.pageLabel('', 'https://gw.example/chat/main'), null);
+  assert.strictEqual(chrome.pageLabel(undefined, 'https://gw.example/chat/main'), null);
+  // Suffix only, nothing before it.
+  assert.strictEqual(chrome.pageLabel('OpenClaw', 'https://gw.example/chat/main'), null);
+});
+
+test('the window title always ends in the app name', () => {
+  assert.strictEqual(chrome.windowTitle('Home'), `Home — ${chrome.APP_NAME}`);
+  assert.strictEqual(chrome.windowTitle(null), chrome.APP_NAME);
+  assert.strictEqual(chrome.APP_NAME, 'Claw Desktop');
+});
+
 /* ------------------------------------------------------------------- theme */
 
 // The bug these guard: every self-painted surface was pinned to one dark

@@ -76,21 +76,15 @@ const WIN_CONTROLS_WIDTH =
 // window title under the close button.
 const WIN_CONTROLS_FALLBACK = 160;
 
-// Left edge to keep clear on macOS for the traffic lights. There is no `env()`
-// for these — the position is ours, set below — so it is derived, not guessed:
-// three 12px buttons on a 20px pitch span 52px, from `MAC_LIGHTS_X`.
-//
-// This is needed because the Control UI's own left inset does NOT cover the
-// nav sidebar. `--shell-titlebar-inset` is 12px while the nav is expanded and
-// 90px only once it collapses, and it is applied solely to `.chat-pane__header`
-// — upstream assumes that with the sidebar open the lights land on the sidebar
-// and its host has dealt with them. Ours has to.
+// Where the strip's label starts on macOS, clearing the traffic lights. There is
+// no `env()` for these — the position is ours, set below — so it is derived, not
+// guessed: three 12px buttons on a 20px pitch span 52px, from `MAC_LIGHTS_X`.
 const MAC_LIGHTS_X = 16;
 const MAC_LIGHTS_SPAN = 52;
-// Breathing room between the last light and the agent name. Its own constant
-// because it is the one number here that is a judgement rather than a
-// measurement: everything else is fixed by the buttons, this is how close the
-// text is allowed to sit to them. Started at 10px, which read as crowded.
+// Breathing room between the last light and the label. Its own constant because
+// it is the one number here that is a judgement rather than a measurement:
+// everything else is fixed by the buttons, this is how close the text is allowed
+// to sit to them. Started at 10px, which read as crowded.
 const MAC_LIGHTS_GAP = 22;
 const MAC_CONTENT_INSET = MAC_LIGHTS_X + MAC_LIGHTS_SPAN + MAC_LIGHTS_GAP;
 
@@ -133,9 +127,8 @@ function enabled(platform = process.platform) {
 }
 
 /**
- * How much of the window the page does NOT get, because the app draws chrome
- * there. Non-zero only on Windows; macOS hands the page the whole window and
- * lets the UI's own header double as the title bar.
+ * How much of the window the page does NOT get, because the app draws its title
+ * strip there. Zero only on Linux, which keeps its OS frame.
  */
 function contentInset(platform = process.platform) {
   return { top: platform === 'linux' ? 0 : STRIP_HEIGHT };
@@ -181,6 +174,49 @@ function stripCss(platform = process.platform) {
 // page never shares space with them. The app now has no dependency whatsoever on
 // upstream's class names or markup, which is the durable win here — those were
 // never an API, and every release could have moved them.
+
+/* ------------------------------------------------------------------- title */
+
+const APP_NAME = 'Claw Desktop';
+
+/**
+ * True for a chat route with an agent but no session — the "Home" entry in the
+ * nav, `/chat/<agent>`.
+ */
+function isAgentHome(url) {
+  try {
+    const segments = new URL(url).pathname.split('/').filter(Boolean);
+    return segments.length === 2 && segments[0] === 'chat';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The label for the title strip and the window, or null for "just the app name".
+ *
+ * Derived from the page's own `document.title`, which is right nearly
+ * everywhere: the Control UI titles its routes "Automations", "Plugins", or the
+ * session's name. The exception is Home — `/chat/<agent>` — which it titles with
+ * the **agent id** ("main"), so the strip read "main" where the nav said "Home".
+ * That is answered from the route rather than by rewriting the string, because
+ * "main" is a legitimate title for anything else and an agent can be called
+ * whatever you like.
+ *
+ * A title without the Control UI's own suffix is not trusted at all: our
+ * file:// pages set their own titles, and a gateway is free to set any it likes.
+ */
+function pageLabel(title, url) {
+  const raw = typeof title === 'string' ? title : '';
+  const stripped = raw.replace(/\s*[—–-]\s*OpenClaw\s*$/, '').trim();
+  if (!stripped || stripped === raw.trim()) return null;
+  return isAgentHome(url) ? 'Home' : stripped;
+}
+
+/** What the OS window title should be, given that label. */
+function windowTitle(label) {
+  return label ? `${label} — ${APP_NAME}` : APP_NAME;
+}
 
 /* ------------------------------------------------------------------- theme */
 
@@ -447,6 +483,10 @@ module.exports = {
   MAC_LIGHTS_GAP,
   MAC_CONTENT_INSET,
   windowOptions,
+  APP_NAME,
+  isAgentHome,
+  pageLabel,
+  windowTitle,
   applyTheme,
   themeFromReport,
   fallbackTheme,
