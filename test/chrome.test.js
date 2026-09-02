@@ -101,10 +101,17 @@ test('macOS clears the traffic lights off the sidebar top row', () => {
     'sidebar brand row must be inset past the traffic lights',
   );
   // Derived from the button geometry we set, not a magic number: three 12px
-  // lights on a 20px pitch from MAC_LIGHTS_X, plus a gap.
+  // lights on a 20px pitch from MAC_LIGHTS_X, plus a deliberate gap.
+  assert.strictEqual(
+    chrome.MAC_CONTENT_INSET,
+    chrome.MAC_LIGHTS_X + chrome.MAC_LIGHTS_SPAN + chrome.MAC_LIGHTS_GAP,
+    'inset must stay the sum of its parts, not drift into a literal',
+  );
+  // Clearing the last light is necessary but not sufficient: at a 10px gap the
+  // agent name read as crowded against the close button.
   assert.ok(
-    chrome.MAC_CONTENT_INSET > chrome.MAC_LIGHTS_X + 52,
-    'inset must clear the far edge of the last light',
+    chrome.MAC_LIGHTS_GAP >= 20,
+    'the name needs breathing room, not just non-overlap',
   );
   // Windows has no lights on the left, so it must not pay this cost.
   assert.ok(!flat(chrome.dragCss('win32')).includes('sidebar-pad-x'));

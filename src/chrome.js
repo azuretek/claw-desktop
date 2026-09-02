@@ -86,7 +86,7 @@ const WIN_CONTROLS_FALLBACK = 160;
 
 // Left edge to keep clear on macOS for the traffic lights. There is no `env()`
 // for these — the position is ours, set below — so it is derived, not guessed:
-// three 12px buttons on a 20px pitch span 52px, from `MAC_LIGHTS_X`, plus a gap.
+// three 12px buttons on a 20px pitch span 52px, from `MAC_LIGHTS_X`.
 //
 // This is needed because the Control UI's own left inset does NOT cover the
 // nav sidebar. `--shell-titlebar-inset` is 12px while the nav is expanded and
@@ -94,7 +94,13 @@ const WIN_CONTROLS_FALLBACK = 160;
 // — upstream assumes that with the sidebar open the lights land on the sidebar
 // and its host has dealt with them. Ours has to.
 const MAC_LIGHTS_X = 16;
-const MAC_CONTENT_INSET = MAC_LIGHTS_X + 52 + 10;
+const MAC_LIGHTS_SPAN = 52;
+// Breathing room between the last light and the agent name. Its own constant
+// because it is the one number here that is a judgement rather than a
+// measurement: everything else is fixed by the buttons, this is how close the
+// text is allowed to sit to them. Started at 10px, which read as crowded.
+const MAC_LIGHTS_GAP = 22;
+const MAC_CONTENT_INSET = MAC_LIGHTS_X + MAC_LIGHTS_SPAN + MAC_LIGHTS_GAP;
 
 /**
  * BrowserWindow options for the main window.
@@ -493,6 +499,8 @@ module.exports = {
   contentInset,
   stripCss,
   MAC_LIGHTS_X,
+  MAC_LIGHTS_SPAN,
+  MAC_LIGHTS_GAP,
   MAC_CONTENT_INSET,
   windowOptions,
   dragCss,
