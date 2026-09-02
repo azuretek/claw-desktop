@@ -4,286 +4,131 @@ A standalone desktop window for the OpenClaw Control UI — its own icon, its ow
 Dock/taskbar entry, a tray icon and a global shortcut. Electron, one codebase,
 builds for macOS, Windows and Linux.
 
-## Do you actually need this?
+**Viewer only.** It does not run a gateway, does not pair as a node, and has no
+access to the host beyond the window it draws.
 
-Check these first — two of them cost nothing.
+## Do you actually need this?
 
 | Option | What you get | Cost |
 |---|---|---|
-| **Install the PWA** (Chrome/Edge → *Install app*) | Own icon and window, **plus Web Push that wakes it when closed** | Zero. The Control UI already ships `manifest.webmanifest` + a service worker |
+| **Install the PWA** (Chrome/Edge → *Install app*) | Own icon and window, **plus Web Push that wakes it when closed** | Zero — the Control UI already ships a manifest and service worker |
 | **[Windows Hub](https://github.com/openclaw/openclaw-windows-node/releases/latest)** / macOS menu-bar app | Native chat, tray, Command Center, **and node mode** (screen, camera, `system.run`) | Turns the machine into a paired node — a much larger security surface |
 | **This app** | Own window, tray, close-to-tray, global hotkey, multiple gateway profiles, no browser dependency | A build step |
 
-Pick the PWA if you mainly want push notifications. Pick Windows Hub if you want
-the machine to *be* a node. Pick this if you want the Control UI as a plain app
-that is always one keystroke away.
-
-**This app is a viewer only.** It does not run a gateway, does not pair as a node,
-and has no access to the host beyond the window it draws.
+Pick the PWA for push notifications. Pick Windows Hub to make the machine a
+node. Pick this for the Control UI as a plain app that is always one keystroke
+away.
 
 ## Install
 
-Grab the installer for your platform from the repo's
-[Releases](https://github.com/azuretek/claw-desktop/releases) page.
+From the [Releases](https://github.com/azuretek/claw-desktop/releases) page:
 
 - **Windows** — run `ClawDesktop-Setup-<version>-<arch>.exe`. Per-user, no admin.
-- **macOS** — open the `.dmg` and drag to Applications. The build is **unsigned**,
-  so Gatekeeper will refuse it on first launch. Clear the quarantine flag once:
+- **macOS** — open the `.dmg` and drag to Applications. Builds are **unsigned**,
+  so clear the quarantine flag once:
 
   ```sh
   xattr -dr com.apple.quarantine "/Applications/Claw Desktop.app"
   ```
 
-### Upgrading from the "OpenClaw"-named build
-
-This app was called *OpenClaw* until it was renamed to **Claw Desktop**. Two
-consequences:
-
-- **The profile moves with you.** `productName` is what Electron derives the
-  profile directory from, so a rename repoints it at an empty one. On first
-  launch the app moves the old directory across (`OpenClaw` → `Claw Desktop`),
-  keeping the gateway list, the encrypted credentials, and — the one that bites
-  — the paired device identity, so the Gateway does not see an unrecognised
-  client and report a login from a new device. **Quit the old app first.** The
-  move is skipped if a `Claw Desktop` profile already exists.
-- **The old install is a separate app.** The Windows `appId` changed, so the
-  installer will not replace an existing *OpenClaw* entry. Uninstall that one,
-  and on macOS delete `/Applications/OpenClaw.app`.
+Upgrading from the old *OpenClaw*-named build: quit it first, then uninstall it
+— the `appId` changed, so the installer will not replace it. Your profile,
+credentials and paired device identity move across automatically on first launch
+([src/profile.js](src/profile.js)).
 
 ## First run
 
-1. The setup window lists the gateways from `src/defaults.js`. Pick one, or add
-   your own and use **Test connection** to check reachability before committing.
-2. Press **Edit** on that gateway and save its token. Get it on the gateway host
-   with:
+1. Pick a gateway from the list, or add your own and use **Test connection**.
+2. Press **Edit** and save its token, from `openclaw gateway auth-token --show`
+   on the gateway host.
 
-   ```sh
-   openclaw gateway auth-token --show
-   ```
+Prefer the tailnet address (`https://<host>.<tailnet>.ts.net`, no port) —
+Tailscale Serve terminates a real certificate. The `:18789` addresses are
+self-signed and go through certificate pinning below.
 
-   The app supplies it on every connect, so the Control UI never asks you to
-   paste anything. See [Credentials](#credentials).
+## Features
 
-Use the tailnet address (`https://<host>.<tailnet>.ts.net`, no port) where you can:
-Tailscale Serve terminates a real Let's Encrypt certificate, so it just works. The
-`:18789` addresses talk to the gateway's own listener, which is self-signed — see
-below.
+### Credentials
 
-## Certificates
+Each gateway carries its own, set under **Settings → Gateways → Edit**, so you
+never hand-paste a token.
 
-The gateway generates its own certificate, so any `:18789` address trips a TLS
-error. Rather than accepting every bad certificate everywhere — which would make
-this app trivially MITM-able — it pins fingerprints:
-
-- First failure for a host raises a prompt showing the fingerprint. Accepting pins
-  **that exact fingerprint for that host only**.
-- If a pinned host later presents a *different* certificate you get a distinct,
-  louder warning that defaults to Cancel. Expected after a gateway reinstall;
-  otherwise treat it as hostile.
-- Review and revoke pins under **Settings → Trusted certificates**.
-
-## Credentials
-
-Each gateway carries its own saved credentials, set under **Settings → Gateways →
-Edit**. The point is that you never hand-paste a token, and never keep one in a
-password manager you have to open first.
-
-| Field | How the app applies it |
+| Field | How it is applied |
 |---|---|
-| **Gateway token** | Handed to the Control UI on the URL fragment as `#token=…`, the [documented handoff](https://docs.openclaw.ai/web/urls). The UI consumes it, stores it for that gateway, and strips it from the address bar. Reapplied on every connect, so it also repairs a stale stored token. |
-| **Gateway password** | For gateways in password mode. There is **no** URL handoff for passwords — the Control UI parses only `gatewayUrl`, `token` and `bootstrapToken`, and its docs are explicit that passwords stay in memory only. So the app fills the sign-in form instead. |
-| **Extra headers** | Added to every request **to that gateway's origin only**, for Cloudflare Access, a shared-secret header, or an authenticating reverse proxy. |
+| **Gateway token** | Handed to the Control UI on the URL fragment as `#token=…`, the [documented handoff](https://docs.openclaw.ai/web/urls). Reapplied on every connect, so it also repairs a stale stored token. |
+| **Gateway password** | No URL handoff exists for passwords, so the app fills the sign-in form. Best-effort: it reads the login gate's markup, which is not an API, and fails soft. Prefer token mode. |
+| **Extra headers** | Sent to that gateway's origin only — for Cloudflare Access, a shared secret, or an authenticating proxy. |
 
-Storage:
+Stored in `credentials.json`, encrypted with Electron `safeStorage` (macOS
+Keychain, Windows DPAPI). `config.json` holds no secrets. The settings page is
+**write-only** — it can set or clear a credential and ask whether one exists,
+but no IPC channel returns a value.
 
-- Values live in `credentials.json` beside `config.json`, encrypted with Electron
-  `safeStorage` — the macOS Keychain and Windows DPAPI. `config.json` stays free
-  of secrets so it remains safe to open or paste.
-- On Linux, `safeStorage` silently degrades to a `basic_text` backend that is
-  obfuscation rather than encryption. The app treats that as unavailable and
-  refuses to store, rather than pretending. Install `gnome-keyring` or `kwallet`.
-- The settings page is **write-only**: it can set or clear a credential and ask
-  whether one exists, but there is no IPC channel that returns a value. A bug in
-  that page cannot become a disclosure.
-- Removing a gateway deletes its credentials but keeps its site data — see the
-  session note below for why.
+On Linux `safeStorage` degrades to plain obfuscation; the app treats that as
+unavailable and refuses to store rather than pretending. Install
+`gnome-keyring` or `kwallet`.
 
-Two caveats worth knowing:
+### Certificate pinning
 
-- **Password autofill is best-effort.** It depends on the Control UI's login-gate
-  markup, which is not an API. It fills only empty fields, runs at most once per
-  load, and if the gate never appears it does nothing. Token mode is the durable
-  path; prefer it.
-- **All gateways share one session**, exactly as they would share one browser
-  profile. Chromium already keys site storage by origin, so gateways on
-  different origins are isolated without help. An earlier build gave each
-  gateway entry its own `persist:` partition; because the partition name came
-  from the entry's UUID, editing a URL — or upgrading — threw away the device
-  identity, and the Gateway reported a login from an unrecognised client.
-  Removing a gateway now deletes its credentials but deliberately leaves its
-  site data, so re-adding it does not look like a new device. Use
-  `openclaw devices revoke` to actually sever one.
+Trust-on-first-use for self-signed gateways. The first failure for a host shows
+its fingerprint and pins that exact fingerprint for that host alone. A pinned
+host later presenting a different certificate raises a louder warning that
+defaults to Cancel. Review and revoke under **Settings → Trusted certificates**.
 
-## Window chrome
+### Window chrome
 
-The main window is frameless on macOS and Windows: no OS title bar, and the
-app's colour runs to the top edge. The window buttons sit on a 36px strip the
-app draws for itself, above the page, carrying the current session's name.
+Frameless on macOS and Windows: the app's colour runs to the top edge, and the
+window buttons sit on a 36px strip the app draws for itself, carrying the
+current session's name. They are the OS's real buttons — traffic lights,
+Windows caption buttons — so snap layouts and tooltips keep working and the
+window can never become unclosable.
 
-They are the OS's real buttons — macOS traffic lights, Windows caption buttons
-via `titleBarOverlay` — so snap layouts, tooltips and the taskbar preview keep
-working, and the window can never be made unclosable by a CSS mistake. The strip
-just gives them somewhere to live that is not on top of the page.
+The page loads into a view that *starts below* the strip, so nothing it draws
+can land under the buttons, and **the app injects nothing into the gateway page
+at all** — no marker classes, no drag regions, no insets, and so no dependency
+on upstream markup. Linux keeps its normal frame.
 
-**Why a strip rather than letting them float over the content.** The Control UI
-invites the floating approach: its stylesheet reads marker classes on `<html>`
-it never sets itself (`openclaw-native-macos`, `openclaw-native-web-chrome`) and
-under them grows its header rows to titlebar height and insets them for native
-window buttons. The app used to set those classes and add insets on top.
+Colours are read back off the page rather than assumed, so the caption strip,
+window background and the app's own pages follow whichever of the Control UI's
+themes is active, light or dark. The mode is remembered, so a cold start opens
+in the right palette instead of flashing the wrong one.
 
-It does not work, because "which element is under the window buttons" has no
-stable answer. In order, each fixed and each then wrong in some other layout
-state: the chat pane header; a docked side panel's header; the empty "Open a
-tab" header; the custodian panel, which is `position: fixed; right: 0` and so
-cannot be moved by any ancestor's padding; the sidebar brand row on macOS; and
-finally any routed page's own top-left content once the nav is collapsed —
-upstream computes `--shell-titlebar-inset: 90px` for that case and applies it to
-`.chat-pane__header` alone.
+Both mechanisms are documented at length in [src/chrome.js](src/chrome.js).
 
-A smaller viewport is the one inset a fixed-position overlay cannot escape, so
-the page loads into a `WebContentsView` that starts below the strip. Nothing it
-draws can share space with the buttons because it does not extend into that
-band — and **the app now injects nothing into the gateway page at all**: no
-marker classes, no drag regions, no insets, and so no dependency on upstream
-markup.
+### Stale UI after an upgrade
 
-Note this is not the same as reserving space *inside* the page, which was tried
-and failed: `vh` is always the **whole** window, so a page sized `height: 100vh`
-stays window-height and lands exactly the strip's height below the fold —
-measured on a probe page, 754px of content in a 720px window. Shrinking the view
-shrinks the viewport, so `100vh` is correct by definition.
+The Control UI is a PWA whose service worker serves `/assets/` cache-first. This
+app closes to the tray rather than quitting, so a document can sit for weeks
+without the navigation that would re-check `sw.js` — leaving the app showing an
+older Control UI than the gateway is serving.
 
-Linux keeps its normal frame; window managers vary too much to be confident the
-user can still move and close a frameless window.
+Three ways out:
 
-### Following the UI's theme
+- **Gateway upgraded** — the app compares the build id in `sw.js` against the
+  one recorded for that gateway and, if it moved, drops the caches and reloads
+  once, automatically.
+- **App upgraded** — the first run after a new build clears them before
+  anything loads.
+- **Neither** — **File → Clear cache and reload**, also on the tray menu
+  (Windows auto-hides the menu bar behind Alt, exactly when you want this).
 
-Some surfaces belong to the app, not the page: the Windows caption strip (drawn
-by the OS *above* the web contents), each window's background behind an
-unpainted page, and the settings and error pages. The Control UI's stylesheet
-cannot reach any of them, and it ships twelve palettes — six of them light.
-Pinned to one dark palette, a light theme left a 137×50 near-black hole in the
-top-right corner of an otherwise cream window.
+All three drop the service worker, its Cache Storage, and the HTTP and
+compiled-code caches — and **never** cookies, localStorage or IndexedDB. That
+boundary is load-bearing: the paired device identity lives in origin storage, so
+clearing it would make the Gateway report a login from an unrecognised device.
+[src/cache.js](src/cache.js) keeps the two apart and `test/cache.test.js`
+asserts it.
 
-So the app reads the colours back off the page rather than assuming them. A
-sandboxed preload resolves `var(--bg)` / `var(--text)` against a throwaway
-element — asking the engine to flatten whatever the theme was authored in down
-to `rgb()` — and reports the result. The main process parses that to `#rrggbb`,
-discards anything transparent or unparseable, and repaints the caption overlay
-and window background. A `MutationObserver` on `data-theme` catches theme
-changes, which the picker makes in place with no navigation to hang a load
-event off.
+### Settings
 
-`nativeTheme.themeSource` is then set from the **page**, not the OS: the theme
-is chosen in the Control UI, so following the OS would leave a light UI sitting
-in a dark settings window. That is also what makes `prefers-color-scheme` inside
-the app's own `file://` pages resolve to the UI's answer, so `ui.css` needs no
-IPC of its own.
+One window, **Cmd/Ctrl+,** or the tray menu.
 
-The reporting preload runs for remote pages too, and exposes nothing to them —
-it reads colours out, never in. A hostile gateway could report any colour it
-liked; the blast radius is an ugly title bar, because nothing reaches an
-Electron API without being parsed into a hex triple first.
-
-The mode alone is remembered in `config.json` (`themeMode`), so a cold start
-opens in the right colours instead of flashing the wrong palette for as long as
-the gateway takes to answer — over Tailscale to a sleeping box, that is not a
-flash.
-
-## Stale UI after an upgrade
-
-The Control UI is a PWA. Its service worker keys a cache on a build id embedded
-in `sw.js` and serves everything under `/assets/` cache-first, without
-revalidating. That is fine in a browser, where you close the tab and the next
-navigation re-checks `sw.js`. It is not fine here: this app closes to the tray
-rather than quitting, so a document can sit for weeks without a single
-navigation, still controlled by the worker an older gateway installed. What you
-see is an app still showing yesterday's Control UI after the gateway under it
-was upgraded.
-
-Three ways out, in order of how little you have to notice:
-
-- **The gateway was upgraded.** After every successful load the app reads the
-  build id out of `sw.js` and compares it to the one recorded for that gateway
-  in `config.json` (`swVersions`). If it moved, the caches are dropped and the
-  page reloads — once, automatically.
-- **This app was upgraded.** A new build brings a new Electron and a new
-  preload, so the first run after one clears the caches before anything loads.
-  What counts as "a new build" is `appBuild` in `config.json` — the version
-  *plus the app bundle's size and mtime*, because nothing bumps the version in
-  `package.json` and a semver comparison would therefore never fire. A profile
-  with no recorded `appBuild` is a fresh install, not an upgrade, and clears
-  nothing.
-- **Neither, but it still looks wrong.** **File → Clear cache and reload**, also
-  on the tray menu. It is on the tray deliberately: Windows runs with
-  `autoHideMenuBar`, so the menu is behind an Alt press exactly when the window
-  is in the state that makes you want this.
-
-All three drop the same three things and nothing else: the service-worker
-registration, its Cache Storage, and the HTTP + compiled-code caches.
-
-**Cookies, localStorage and IndexedDB are never touched, and that boundary is
-load-bearing.** The gateway's paired device identity lives in origin storage, so
-a blunt `clearStorageData()` with no `storages` list would make the Gateway see
-a brand-new client and report a login from an unrecognised device — the same
-failure the per-gateway partition scheme used to cause (see the comment above
-`configureSession` in `src/main.js`). `src/cache.js` keeps caches and storage
-apart so that stays true even when someone is in a hurry, and
-`test/cache.test.js` asserts it.
-
-## Settings
-
-Everything lives in one window (**Cmd/Ctrl+,**, or the tray menu). It keeps a
-normal OS title bar, and follows the Control UI's light or dark theme:
-
-- **Gateways** — add, remove, edit, test, switch. Each row shows what the app will
-  sign in with. Switching is also in the tray menu.
-- **Keep running when the window is closed** — closing hides to the tray. Quit
-  from the tray or the app menu. On by default.
+- **Gateways** — add, remove, edit, test, switch. Switching is also on the tray.
+- **Keep running when the window is closed** — on by default; quit from the tray.
 - **Open at login** / **Start hidden in the tray**.
-- **Global shortcut** — `CommandOrControl+Shift+O` by default. Shows or hides the
-  window from anywhere. Clear it to disable.
+- **Global shortcut** — `CommandOrControl+Shift+O` by default. Clear to disable.
 
-### Which build am I running?
-
-The line at the bottom of Settings names the commit the app was packaged from —
-during first-run setup as well as afterwards:
-
-```
-Claw Desktop 1.0.0 (a1b2c3d4e5, built 2026-09-02 08:41Z) · Electron 44.1.1 · …
-```
-
-`package.json`'s version is hand-maintained and rarely moves — every build so far
-is `1.0.0` — so it cannot tell two builds apart. The commit can. Variants:
-
-| Shown | Means |
-|---|---|
-| `1.0.0 (a1b2c3d4e5, built …)` | packaged from that commit on `main` |
-| `1.0.0 (fix-clicks a1b2c3d4e5, built …)` | packaged from a branch — named, because that is the surprising case |
-| `1.0.0 (a1b2c3d4e5-dirty, built …)` | the tree had uncommitted changes, so the hash does **not** describe what shipped |
-| `1.0.0 (source build)` | running via `npm start`, which has no single commit to claim |
-
-`scripts/build-info.js` writes `src/build-info.json` from electron-builder's
-`beforePack` hook, so `pack`, every `build:*` script and CI stamp it the same
-way. The file is generated and git-ignored — a commit cannot contain its own
-hash — and its absence is exactly what makes a source run report itself as one.
-
-That commit doubles as the app-upgrade fingerprint for the cache clear in
-[Stale UI after an upgrade](#stale-ui-after-an-upgrade). A dirty or source build
-falls back to the app bundle's size and mtime, because every build from a dirty
-tree shares one hash.
-
-Config lives at:
+Config lives beside the credentials, written atomically:
 
 | Platform | Path |
 |---|---|
@@ -291,9 +136,22 @@ Config lives at:
 | Windows | `%APPDATA%\Claw Desktop\config.json` |
 | Linux | `~/.config/Claw Desktop/config.json` |
 
-It is written atomically and holds gateway list, window bounds, preferences, and
-pinned certificate fingerprints. **No secrets** — those live encrypted in
-`credentials.json` in the same directory (see [Credentials](#credentials)).
+### Which build am I running?
+
+The line at the bottom of Settings names the commit the app was packaged from,
+during first-run setup as well as afterwards:
+
+```
+Claw Desktop 1.0.0 (a1b2c3d4e5, built 2026-09-02 08:41Z) · Electron 44.1.1 · …
+```
+
+| Shown | Means |
+|---|---|
+| `1.0.0 (a1b2c3d4e5, …)` | packaged from that commit on `main` |
+| `1.0.0 (fix-clicks a1b2c3d4e5, …)` | built from a branch — named, because that is the surprising case |
+| `1.0.0 (a1b2c3d4e5-dirty, …)` | uncommitted changes; the hash does **not** describe what shipped |
+| `1.0.0-dev.a1b2c3d4e5 (…)` | a CI dev build, versioned for its commit |
+| `1.0.0 (source build)` | `npm start`, which has no single commit to claim |
 
 ## Development
 
@@ -307,161 +165,91 @@ npm run build:win        # nsis installer (x64, arm64)
 npm run icons            # regenerate PNGs from src/assets/claw*.svg
 ```
 
-Icons are **committed** deliberately, so a clean clone builds without `sharp`.
-Re-run `npm run icons` only when the artwork changes.
+Icons are committed so a clean clone builds without `sharp`; re-run `npm run
+icons` only when the artwork changes. The artwork is original — neither file is
+derived from OpenClaw's mascot or any other upstream brand asset.
 
-The artwork is original and lives in two files: `src/assets/claw.svg` is the
-application icon, and `src/assets/claw-tray.svg` is the same mark stripped of its
-tile and window for the 16px tray. Neither is derived from OpenClaw's mascot or
-any other upstream brand asset.
+Windows installers need Wine to cross-build, so build them on Windows:
 
-Building Windows installers on macOS needs Wine for resource editing, so build
-Windows on Windows. Two ways:
+```
+gh repo clone azuretek/claw-desktop     :: not git clone git@… — Git for Windows
+cd claw-desktop                         :: ships an ssh that cannot see the
+npm ci                                  :: Windows OpenSSH agent's keys
+npm run build:win
+dist\ClawDesktop-Setup-<version>-x64.exe /S     :: silent, per-user
+```
 
-- **On the Windows box directly** — fastest, and costs no CI minutes:
-
-  ```
-  gh repo clone azuretek/claw-desktop
-  cd claw-desktop
-  npm ci
-  npm run build:win
-  dist\ClawDesktop-Setup-1.0.0-x64.exe /S     :: /S installs silently, per-user
-  ```
-
-  It installs to `%LOCALAPPDATA%\Programs\Claw Desktop`. A full `build:win` takes
-  roughly half an hour on a recent laptop. **Passing `--x64` does not shorten it** —
-  the per-target `arch` list in `electron-builder.yml` wins over the CLI flag,
-  so you still get x64, arm64, and the combined installer. Edit the config if
-  you genuinely want one arch. Use `gh repo clone` rather
-  than `git clone git@…`: Git for Windows ships its own `ssh` that cannot see keys
-  held by the Windows OpenSSH agent, so an SSH clone fails with
-  `Permission denied (publickey)` even when `ssh -T git@github.com` succeeds.
-
-- **`release` GitHub Actions workflow** — builds each platform on its own
-  runner. Note that private-repo minutes bill at 2× for Windows and 10× for
-  macOS, so prefer a local build for routine work.
+Roughly half an hour on a recent laptop. `--x64` does not shorten it — the
+per-target `arch` list in `electron-builder.yml` wins over the CLI flag. Or run
+the `release` workflow, which builds each platform on its own runner.
 
 ## Releasing
 
 ```sh
 npm run release                 # asks for the bump
 npm run release -- patch        # 1.0.0 -> 1.0.1
-npm run release -- minor        # 1.0.0 -> 1.1.0
-npm run release -- major        # 1.0.0 -> 2.0.0
+npm run release -- minor
 npm run release -- patch --dry-run
 ```
 
 [release-it](https://github.com/release-it/release-it) bumps `package.json` and
-the lockfile, commits, tags `vX.Y.Z`, and pushes. CI then builds both platforms
-and publishes a GitHub Release with the installers attached. Configuration and
-the reasoning behind it are in `.release-it.cjs`.
+the lockfile, commits, tags `vX.Y.Z`, and pushes; CI then builds both platforms
+and publishes a GitHub Release with the installers attached. It refuses, with
+nothing written, if you are not on `main`, the tree is dirty, the branch has no
+upstream, or the tests fail. See [.release-it.cjs](.release-it.cjs).
 
-It refuses, with nothing written, if you are not on `main`, the tree is dirty,
-the branch has no upstream, or the tests fail. Every one of those is a state
-where the release would name a commit CI is not going to build.
+**Do not bump the version by hand.** `artifactName` interpolates `${version}`
+from `package.json`, so a hand-pushed tag can publish a release named `v1.1.0`
+containing `ClawDesktop-Setup-1.0.0-x64.exe`. CI's `version` job refuses that
+before either build starts.
 
-**Why not semantic-release or release-please:** both decide the version by
-parsing Conventional Commits, and this repo does not write them — 1 of 27
-subjects matches. Adopting either means rewriting a deliberate commit style to
-satisfy a parser, and until that happened every release would be classified "no
-release". release-it asks for the bump instead.
-
-**The GitHub Release is created by CI, not by release-it** (`github.release:
-false`). It has to be: electron-builder emits `latest.yml` / `latest-mac.yml`
-during the build, so a release created locally would exist before those files
-do — and two publishers writing one release is how assets go missing from it.
-
-**Do not bump the version by hand.** `artifactName` in `electron-builder.yml`
-interpolates `${version}` from `package.json`, so a tag that disagrees with it
-publishes a release called `v1.1.0` containing files named
-`ClawDesktop-Setup-1.0.0-x64.exe`. release-it makes them agree by construction;
-the `version` job catches a tag pushed by hand, before either build starts:
-
-```
-version check failed: tag says 1.1.0 but package.json says 1.0.0 —
-the installers would be named for the wrong version.
-```
-
-### Dev builds
-
-Running the workflow manually (`workflow_dispatch`) produces a **dev build**,
-versioned for its commit rather than for `package.json`:
-
-```
-ClawDesktop-Setup-1.0.0-dev.758853d656-x64.exe
-```
-
-Before this, every manual build was named for whatever `package.json` last said,
-so three different installers arrived called `ClawDesktop-Setup-1.0.0-x64.exe`
-and only an Actions run id told them apart. The version is applied with
-`--config.extraMetadata.version`, which overrides what electron-builder packages
-without touching the tracked `package.json`, so the app reports the same string
-in Settings that its filename carries.
-
-A dev version sorts *below* the release it is named for — semver puts a
-prerelease under its normal version — so a machine left on one is behind the
-next release rather than stranded above it.
-
-### Auto-update
-
-Not wired up yet, but every release now carries what an updater needs:
-`latest.yml`, `latest-mac.yml` and per-file `.blockmap`s, emitted because
-`electron-builder.yml` declares a `publish` provider.
-
-Adding [electron-updater](https://www.electron.build/auto-update) would work on
-**Windows only**, and that limit is structural rather than a configuration gap:
-
-- **Windows works unsigned.** `NsisUpdater.verifySignature()` reads
-  `publisherName` from `app-update.yml`, and `if (publisherName == null) return
-  null` — an unsigned build has no publisher, so verification is skipped and the
-  update proceeds.
-- **macOS cannot.** `MacUpdater` hands the download to native **Squirrel.Mac**,
-  which requires a valid signature on the running bundle. An unsigned app fails
-  with `Could not get code signature for running application`. Only a Developer
-  ID fixes that.
-
-So macOS would be limited to *noticing* a new release and linking to it. It also
-costs the app its first runtime dependency — there are currently none at all.
+Running the workflow manually produces a **dev build**, versioned for its commit
+(`ClawDesktop-Setup-1.0.0-dev.758853d656-x64.exe`) so two of them are never
+named the same. Dev builds are never published.
 
 ## Known limits
 
-- **No Web Push.** Electron has no push service, so notifications only arrive while
-  the app is running. If you need to be woken when it is closed, install the PWA
-  alongside this.
-- **Unsigned builds.** No Apple Developer ID or Windows code-signing certificate,
-  hence the `xattr` step on macOS and a SmartScreen warning on Windows.
+- **No Web Push.** Electron has no push service, so notifications arrive only
+  while the app runs. Install the PWA alongside if you need waking when closed.
+- **Unsigned builds.** No Apple Developer ID or Windows signing certificate —
+  hence the `xattr` step and a SmartScreen warning.
+- **No auto-update yet.** Releases already carry the metadata for it
+  (`latest.yml`, `latest-mac.yml`, `.blockmap`s). Adding
+  [electron-updater](https://github.com/electron-userland/electron-builder/tree/master/packages/electron-updater)
+  would work on **Windows only**: `NsisUpdater` skips signature verification
+  when the build has no `publisherName`, but macOS hands off to Squirrel.Mac,
+  which requires a signed bundle and fails with `Could not get code signature
+  for running application`. macOS could only be told a release exists.
 - **Not a node.** No screen, camera, or `system.run`. That is Windows Hub's job.
 
 ## Layout
 
 ```
 src/main.js          app lifecycle, window, tray, menus, navigation guards
-src/build-info.js    reads the packed-in commit; formats the Settings build line
+src/chrome.js        title strip geometry + theme adopted from the page
 src/cache.js         drops the Control UI's cached copy of itself, never its storage
 src/certs.js         trust-on-first-use certificate pinning
-src/profile.js       one-time profile move for the OpenClaw -> Claw Desktop rename
-src/chrome.js        title strip geometry + theme adopted from the page
-src/config.js        atomic JSON config store (no secrets)
 src/secrets.js       per-gateway token/password/headers, safeStorage-encrypted
+src/config.js        atomic JSON config store (no secrets)
+src/overlay.js       supervises the settings overlay so it cannot wedge the window
+src/build-info.js    reads the packed-in commit; formats the Settings build line
+src/profile.js       one-time profile move for the OpenClaw -> Claw Desktop rename
 src/defaults.js      suggested gateways and defaults  ← edit for a new machine
 src/preload.js       narrow IPC bridge, exposed to local pages only
 src/ui/              settings and connection-error pages
-scripts/build-info.js  stamps the commit in at pack time (electron-builder beforePack)
-scripts/make-icons.mjs
+scripts/build-info.js    stamps the commit in at pack time (beforePack hook)
+scripts/version.js       CI build versioning + tag/package.json agreement
+scripts/build-version.js decides the version a CI build carries
+scripts/make-icons.mjs   regenerates the icon PNGs from the SVG artwork
 ```
 
 ## Status and licence
 
-A personal project, shared because it might be useful — not a product. There is
-no support commitment and no release schedule, and builds are unsigned. The app
-deliberately does not depend on the Control UI's markup, so an upstream restyle
-should not break the window chrome; the login-gate password autofill is the one
-remaining place that reads the UI's DOM, and it fails soft by design.
-
-Issues and pull requests are welcome; slow replies are likely.
+A personal project, shared because it might be useful — not a product. No
+support commitment, no release schedule, unsigned builds. Issues and pull
+requests are welcome; slow replies are likely.
 
 **Not affiliated with the OpenClaw project.** This is an independent client for
-its Control UI. "Claw Desktop" is deliberately not "OpenClaw" — see
-[src/profile.js](src/profile.js) for the rename's one lasting consequence.
+its Control UI.
 
 MIT — see [LICENSE](LICENSE).
