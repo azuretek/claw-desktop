@@ -89,7 +89,8 @@ Storage:
 - The settings page is **write-only**: it can set or clear a credential and ask
   whether one exists, but there is no IPC channel that returns a value. A bug in
   that page cannot become a disclosure.
-- Removing a gateway deletes its credentials and clears its site data.
+- Removing a gateway deletes its credentials but keeps its site data — see the
+  session note below for why.
 
 Two caveats worth knowing:
 
