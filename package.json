@@ -1,0 +1,23 @@
+{
+  "name": "openclaw-desktop",
+  "productName": "OpenClaw",
+  "version": "1.0.0",
+  "description": "Desktop shell for the OpenClaw Control UI",
+  "main": "src/main.js",
+  "author": "Abi Renhart",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "icons": "node scripts/make-icons.mjs",
+    "pack": "electron-builder --dir",
+    "build:mac": "electron-builder --mac",
+    "build:win": "electron-builder --win",
+    "build:linux": "electron-builder --linux"
+  },
+  "devDependencies": {
+    "electron": "^44.1.1",
+    "electron-builder": "^26.15.3",
+    "sharp": "^0.35.4"
+  }
+}

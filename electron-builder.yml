@@ -1,0 +1,44 @@
+appId: com.azuretek.openclaw-desktop
+productName: OpenClaw
+copyright: Copyright © 2026 Abi Renhart
+
+directories:
+  output: dist
+  buildResources: build
+
+files:
+  - src/**/*
+  - package.json
+  - "!**/*.map"
+
+# Unsigned on purpose: this is a personal fleet app, not a store submission.
+# macOS therefore quarantines the downloaded .dmg — see README for the one-line fix.
+mac:
+  category: public.app-category.productivity
+  icon: build/icon.png
+  identity: null
+  notarize: false
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+
+win:
+  icon: build/icon.png
+  target:
+    - target: nsis
+      arch: [x64, arm64]
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: OpenClaw
+
+linux:
+  icon: build/icon.png
+  category: Utility
+  target: [AppImage]

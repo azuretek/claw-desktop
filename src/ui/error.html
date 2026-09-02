@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: file:;">
+  <title>Cannot reach the gateway</title>
+  <link rel="stylesheet" href="ui.css">
+</head>
+<body>
+  <div class="center">
+    <img src="../assets/openclaw.svg" alt="">
+    <h1 id="headline">Cannot reach the gateway</h1>
+    <p class="detail" id="detail"></p>
+    <div class="actions">
+      <button id="retry" class="primary">Try again</button>
+      <button id="settings">Change gateway…</button>
+    </div>
+    <div class="code" id="code"></div>
+  </div>
+  <script src="error.js"></script>
+</body>
+</html>

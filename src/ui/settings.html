@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:;">
+  <title>OpenClaw Settings</title>
+  <link rel="stylesheet" href="ui.css">
+</head>
+<body>
+  <h1 id="title">Settings</h1>
+  <p class="sub" id="subtitle">Choose which gateway this app connects to.</p>
+
+  <h2>Gateways</h2>
+  <div id="gateways"></div>
+
+  <div class="card">
+    <div class="field">
+      <span>Add a gateway</span>
+      <input type="text" id="new-label" placeholder="Name (e.g. your-host)" autocomplete="off">
+    </div>
+    <div class="field">
+      <input type="url" id="new-url" placeholder="https://host.example.ts.net" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="row">
+      <button id="test">Test connection</button>
+      <button id="add" class="primary">Add</button>
+    </div>
+    <div class="result" id="test-result"></div>
+  </div>
+
+  <section id="prefs" hidden>
+    <h2>Behaviour</h2>
+    <div class="card">
+      <label class="check">
+        <input type="checkbox" id="closeToTray">
+        <span class="stack">
+          <span>Keep running when the window is closed</span>
+          <span>Closing hides the window instead of quitting. Quit from the tray or menu bar.</span>
+        </span>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="launchAtLogin">
+        <span class="stack">
+          <span>Open at login</span>
+          <span>Start OpenClaw automatically when you sign in.</span>
+        </span>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="startHidden">
+        <span class="stack">
+          <span>Start hidden in the tray</span>
+          <span>Launch to the tray without showing the window.</span>
+        </span>
+      </label>
+      <div class="field">
+        <span>Global shortcut</span>
+        <input type="text" id="globalShortcut" placeholder="CommandOrControl+Shift+O" spellcheck="false">
+        <div class="muted-sm" style="margin-top:6px">
+          Shows or hides the window from anywhere. Use Electron accelerator syntax, or clear it to disable.
+        </div>
+        <div class="result" id="shortcut-result"></div>
+      </div>
+      <div class="actions">
+        <button id="save" class="primary">Save preferences</button>
+      </div>
+    </div>
+
+    <h2>Trusted certificates</h2>
+    <div id="certs"></div>
+
+    <hr>
+    <p class="muted-sm" id="about"></p>
+  </section>
+
+  <script src="settings.js"></script>
+</body>
+</html>
