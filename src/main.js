@@ -8,6 +8,7 @@ const path = require('node:path');
 const https = require('node:https');
 const config = require('./config');
 const certs = require('./certs');
+const secrets = require('./secrets');
 const defaults = require('./defaults');
 
 const UI_DIR = path.join(__dirname, 'ui');
@@ -86,7 +87,20 @@ function schedulePersist() {
 
 /* ------------------------------------------------------------------ session */
 
-function configureSession(ses) {
+// One persistent partition per gateway. Device pairing is per browser profile —
+// the Control UI generates a device identity and stores its per-device token in
+// site storage — so a single shared partition would make two gateways overwrite
+// each other's identity and re-pair on every switch. Partitions also keep a
+// work gateway's cookies out of a personal one.
+function partitionFor(id) {
+  return id ? `persist:gw-${id}` : 'persist:openclaw-default';
+}
+
+function sessionForGateway(gw) {
+  return session.fromPartition(partitionFor(gw && gw.id));
+}
+
+function configureSession(ses, gw) {
   const granted = new Set(['notifications', 'clipboard-read', 'clipboard-sanitized-write', 'fullscreen', 'media', 'pointerLock']);
 
   ses.setPermissionRequestHandler((wc, permission, callback, details) => {
@@ -96,6 +110,30 @@ function configureSession(ses) {
 
   ses.setPermissionCheckHandler((_wc, permission, requestingOrigin) =>
     requestingOrigin === activeOrigin() && granted.has(permission));
+
+  applyHeaders(ses, gw);
+}
+
+// Extra request headers for gateways behind an authenticating proxy — Cloudflare
+// Access, a shared-secret header, Basic auth on a reverse proxy.
+//
+// Scoped to the gateway's own origin by the `urls` filter, which is the whole
+// point: a header set here is a credential, and it must never ride along on a
+// request to some third-party host the page happens to load.
+function applyHeaders(ses, gw) {
+  const origin = gw ? originOf(gw.url) : null;
+  const headers = gw ? secrets.load(gw.id).headers : [];
+  // Electron keeps only one listener per session for this event, so re-running
+  // this after a credential change replaces the old set rather than stacking.
+  if (!origin || headers.length === 0) {
+    ses.webRequest.onBeforeSendHeaders(null);
+    return;
+  }
+  ses.webRequest.onBeforeSendHeaders({ urls: [`${origin}/*`] }, (details, callback) => {
+    const next = { ...details.requestHeaders };
+    for (const h of headers) next[h.name] = h.value;
+    callback({ requestHeaders: next });
+  });
 }
 
 /* ------------------------------------------------------------------- errors */
@@ -115,6 +153,26 @@ function showError(detail) {
 
 /* -------------------------------------------------------------- main window */
 
+// The Control UI accepts a token handoff on the URL fragment — `#token=<token>`
+// — reads it during boot, stores it for that gateway, and strips it from the
+// address bar (docs/web/urls.md, "Remote Gateway handoff"). The fragment form is
+// the documented preference over `?token=` because fragments never reach HTTP
+// request logs or a Referer header. This is what lets the app supply the
+// credential instead of asking you to paste one, and because it is reapplied on
+// every connect it also self-heals a stale stored token.
+function withTokenHandoff(rawUrl, token) {
+  if (!token) return rawUrl;
+  try {
+    const url = new URL(rawUrl);
+    const frag = new URLSearchParams(url.hash.startsWith('#') ? url.hash.slice(1) : url.hash);
+    frag.set('token', token);
+    url.hash = `#${frag.toString()}`;
+    return url.toString();
+  } catch {
+    return rawUrl;
+  }
+}
+
 function loadActiveGateway() {
   const gw = config.activeGateway();
   if (!gw) {
@@ -122,8 +180,78 @@ function loadActiveGateway() {
     return openSettings({ firstRun: true });
   }
   showingError = false;
-  console.log(`[openclaw] connecting to ${gw.label || gw.url} <${gw.url}>`);
-  mainWindow.loadURL(gw.url);
+  autofilled = false;
+  const creds = secrets.load(gw.id);
+  const supplied = [creds.token && 'token', creds.password && 'password', creds.headers.length && `${creds.headers.length} header(s)`]
+    .filter(Boolean).join(', ');
+  console.log(`[openclaw] connecting to ${gw.label || gw.url} <${gw.url}>${supplied ? ` (supplying ${supplied})` : ''}`);
+  mainWindow.loadURL(withTokenHandoff(gw.url, creds.token));
+}
+
+/* --------------------------------------------------------------- login gate */
+
+// Password mode has no URL handoff — the Control UI parses only `gatewayUrl`,
+// `token` and `bootstrapToken`, and its docs are explicit that "passwords stay
+// in memory only". So the one way to avoid a manual paste is to fill the login
+// gate ourselves.
+//
+// This is deliberately best-effort and must stay that way: it depends on the
+// Control UI's markup, which is not an API. It fills only empty fields, runs at
+// most once per load, and if the gate never appears it simply does nothing —
+// the worst case is the login screen you would have seen anyway.
+let autofilled = false;
+
+function autofillScript(creds) {
+  return `(() => {
+    if (window.__openclawAutofilled) return 'already';
+    const creds = ${JSON.stringify({ token: creds.token, password: creds.password })};
+    if (!creds.token && !creds.password) return 'nothing-to-fill';
+
+    const setValue = (el, value) => {
+      // Lit binds .value as a property, so assigning el.value alone leaves the
+      // component's own state untouched. Go through the native setter and fire
+      // the input event its @input handler is listening for.
+      const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value');
+      if (desc && desc.set) desc.set.call(el, value); else el.value = value;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+
+    const attempt = () => {
+      const form = document.querySelector('.login-gate__form');
+      if (!form) return false;
+      // Field order in the gate: [0] gateway token, [1] gateway password.
+      const fields = form.querySelectorAll('.settings-secret input');
+      if (!fields.length) return false;
+      const filled = [];
+      if (creds.token && fields[0] && !fields[0].value) { setValue(fields[0], creds.token); filled.push('token'); }
+      if (creds.password && fields[1] && !fields[1].value) { setValue(fields[1], creds.password); filled.push('password'); }
+      if (!filled.length) return false;
+      window.__openclawAutofilled = true;
+      const last = filled.includes('password') ? fields[1] : fields[0];
+      last.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      return true;
+    };
+
+    // The gate renders only after the WebSocket handshake is refused, which is
+    // after did-finish-load — so poll briefly rather than checking once.
+    if (attempt()) return 'filled';
+    const deadline = Date.now() + 10000;
+    const tick = () => { if (attempt() || Date.now() > deadline) return; setTimeout(tick, 250); };
+    setTimeout(tick, 250);
+    return 'watching';
+  })()`;
+}
+
+function maybeAutofill(wc) {
+  if (autofilled) return;
+  const gw = config.activeGateway();
+  if (!gw || originOf(wc.getURL()) !== originOf(gw.url)) return;
+  const creds = secrets.load(gw.id);
+  if (!creds.token && !creds.password) return;
+  autofilled = true;
+  wc.executeJavaScript(autofillScript(creds), true)
+    .then((result) => console.log(`[openclaw] login gate autofill: ${result}`))
+    .catch((err) => console.warn(`[openclaw] login gate autofill failed: ${err.message}`));
 }
 
 function attachNavigationGuards(wc) {
@@ -179,6 +307,12 @@ function attachNavigationGuards(wc) {
 
 function createMainWindow() {
   const cfg = config.get();
+  const gw = config.activeGateway();
+  // A window's partition is fixed at construction, so switching gateways
+  // recreates the window (see switchGateway) rather than just navigating.
+  const partition = partitionFor(gw && gw.id);
+  configureSession(session.fromPartition(partition), gw);
+
   mainWindow = new BrowserWindow({
     ...restoredBounds(),
     minWidth: defaults.minWindow.width,
@@ -190,6 +324,7 @@ function createMainWindow() {
     icon: process.platform === 'linux' ? path.join(ASSETS, 'icon.png') : undefined,
     webPreferences: {
       preload: PRELOAD,
+      partition,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -206,6 +341,7 @@ function createMainWindow() {
 
   wc.on('did-finish-load', () => {
     wc.setZoomLevel(config.get().zoomLevel || 0);
+    maybeAutofill(wc);
   });
 
   wc.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL, isMainFrame) => {
@@ -377,9 +513,23 @@ function buildTray() {
   ]));
 }
 
+function recreateMainWindow() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    const old = mainWindow;
+    mainWindow = null;
+    // destroy(), not close(): close() is intercepted by the close-to-tray
+    // handler, which would hide the old window and leave it alive.
+    old.destroy();
+  }
+  createMainWindow();
+  mainWindow.once('ready-to-show', () => { mainWindow.show(); mainWindow.focus(); });
+}
+
 function switchGateway(id) {
+  const previous = config.get().activeGatewayId;
   config.update({ activeGatewayId: id });
   buildTray();
+  if (previous !== id) return recreateMainWindow();
   showMainWindow();
   loadActiveGateway();
 }
@@ -472,8 +622,11 @@ function testGateway(rawUrl) {
 function currentState() {
   const cfg = config.get();
   return {
-    gateways: cfg.gateways,
+    // Each gateway carries only whether a credential is set, never its value.
+    gateways: cfg.gateways.map((g) => ({ ...g, credentials: secrets.summary(g.id) })),
     activeGatewayId: cfg.activeGatewayId,
+    secretsAvailable: secrets.available(),
+    secretsError: secrets.unavailableReason(),
     settings: {
       globalShortcut: cfg.globalShortcut,
       closeToTray: cfg.closeToTray,
@@ -491,7 +644,40 @@ function registerIpc() {
   ipcMain.handle('app:state', () => currentState());
   ipcMain.handle('app:test-gateway', (_e, url) => testGateway(url));
   ipcMain.handle('app:add-gateway', (_e, entry) => { config.addGateway(entry); buildTray(); return currentState(); });
-  ipcMain.handle('app:remove-gateway', (_e, id) => { config.removeGateway(id); buildTray(); return currentState(); });
+  ipcMain.handle('app:update-gateway', (_e, id, patch) => {
+    config.updateGateway(id, patch || {});
+    buildTray();
+    // The header filter is keyed on the origin, so a changed URL invalidates it.
+    if (id === config.get().activeGatewayId) applyHeaders(sessionForGateway(config.activeGateway()), config.activeGateway());
+    return currentState();
+  });
+  ipcMain.handle('app:remove-gateway', (_e, id) => {
+    // Credentials and site data are per gateway; leaving either behind would
+    // hand the next gateway that reuses the id someone else's session.
+    secrets.forget(id);
+    session.fromPartition(partitionFor(id)).clearStorageData().catch(() => {});
+    config.removeGateway(id);
+    buildTray();
+    return currentState();
+  });
+  // Token and password are applied at connect time, so no session work here.
+  // Save before reading state back: currentState() reports the stored summary.
+  ipcMain.handle('app:set-credentials', (_e, id, patch) => {
+    const saved = secrets.set(id, patch || {});
+    return { ...currentState(), saved };
+  });
+  ipcMain.handle('app:add-header', (_e, id, name, value) => {
+    const res = secrets.addHeader(id, name, value);
+    const gw = config.get().gateways.find((g) => g.id === id);
+    if (res.ok && gw) applyHeaders(sessionForGateway(gw), gw);
+    return { ...currentState(), saved: res };
+  });
+  ipcMain.handle('app:remove-header', (_e, id, name) => {
+    const res = secrets.removeHeader(id, name);
+    const gw = config.get().gateways.find((g) => g.id === id);
+    if (res.ok && gw) applyHeaders(sessionForGateway(gw), gw);
+    return { ...currentState(), saved: res };
+  });
   ipcMain.handle('app:forget-cert', (_e, host) => {
     const cfg = config.get();
     const trustedCerts = { ...cfg.trustedCerts };
@@ -525,8 +711,12 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     if (process.platform === 'win32') app.setAppUserModelId('com.azuretek.openclaw-desktop');
 
-    configureSession(session.defaultSession);
+    // The default session only ever serves our own file:// pages; the gateway
+    // itself loads in a per-gateway partition configured by createMainWindow.
+    configureSession(session.defaultSession, null);
     certs.install(app, () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null));
+
+    if (!secrets.available()) console.warn(`[openclaw] ${secrets.unavailableReason()}`);
     registerIpc();
     buildMenu();
     buildTray();

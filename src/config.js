@@ -78,6 +78,14 @@ function addGateway({ label, url }) {
   return entry;
 }
 
+function updateGateway(id, patch) {
+  const cfg = read();
+  const gateways = cfg.gateways.map((g) => (g.id === id
+    ? { ...g, label: patch.label ?? g.label, url: patch.url ?? g.url }
+    : g));
+  return write({ ...cfg, gateways });
+}
+
 function removeGateway(id) {
   const cfg = read();
   const gateways = cfg.gateways.filter((g) => g.id !== id);
@@ -96,6 +104,7 @@ module.exports = {
   update,
   activeGateway,
   addGateway,
+  updateGateway,
   removeGateway,
   trustCert,
 };

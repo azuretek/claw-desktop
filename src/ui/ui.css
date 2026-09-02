@@ -53,11 +53,13 @@ a  { color: var(--accent); }
   color: var(--ok); border: 1px solid var(--ok); border-radius: 999px; padding: 2px 8px; white-space: nowrap;
 }
 
-input[type="text"], input[type="url"] {
+input[type="text"], input[type="url"], input[type="password"] {
   width: 100%; background: var(--bg); color: var(--text);
   border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font: inherit;
 }
-input[type="text"]:focus, input[type="url"]:focus { outline: none; border-color: var(--accent-dim); }
+input[type="text"]:focus, input[type="url"]:focus, input[type="password"]:focus {
+  outline: none; border-color: var(--accent-dim);
+}
 
 button {
   background: var(--elevated); color: var(--text); border: 1px solid var(--border);
@@ -87,6 +89,12 @@ label.check .stack span:last-child { color: var(--muted); font-size: 12px; }
 .empty { color: var(--muted); font-style: italic; }
 .actions { display: flex; gap: 8px; margin-top: 14px; }
 hr { border: 0; border-top: 1px solid var(--border); margin: 22px 0 0; }
+
+/* Per-gateway credential editor, revealed by the card's Edit button. */
+.editor { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+.editor hr { margin: 14px 0; }
+.editor .row > input { flex: 1; min-width: 0; }
+.hint { margin-top: 6px; }
 
 /* error page */
 .center { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; text-align: center; padding: 0 40px; }
