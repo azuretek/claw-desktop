@@ -73,6 +73,13 @@ jobs:
             dist/*.dmg
             dist/*.zip
             dist/*.exe
+            # Update metadata, emitted because electron-builder.yml declares a
+            # `publish` provider. An updater reads these to learn a release's
+            # version, size and checksum; without them the release is just files.
+            # `latest*` specifically, not `*.yml` — the build also drops
+            # builder-debug.yml in dist/, which has no business in a release.
+            dist/latest*.yml
+            dist/*.blockmap
 
   release:
     needs: [version, build]

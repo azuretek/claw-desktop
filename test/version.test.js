@@ -41,44 +41,15 @@ test('tolerates surrounding whitespace, which is how a version arrives from a sh
   assert.equal(version.parse('  1.2.3\n').major, 1);
 });
 
-/* ---------------------------------------------------------------------- next */
-
-test('bumps each level', () => {
-  assert.equal(version.next('1.2.3', 'patch'), '1.2.4');
-  assert.equal(version.next('1.2.3', 'minor'), '1.3.0');
-  assert.equal(version.next('1.2.3', 'major'), '2.0.0');
-});
-
-test('minor and major reset the levels below them', () => {
-  assert.equal(version.next('1.2.9', 'minor'), '1.3.0');
-  assert.equal(version.next('1.9.9', 'major'), '2.0.0');
-});
-
-test('releasing a prerelease as a patch drops the tag rather than bumping past it', () => {
-  // 1.2.0-dev.abc was always a build heading *towards* 1.2.0. Bumping to 1.2.1
-  // would silently skip the version it was named for.
-  assert.equal(version.next('1.2.0-dev.abc1234', 'patch'), '1.2.0');
-});
-
-test('a prerelease still bumps normally for minor and major', () => {
-  assert.equal(version.next('1.2.0-dev.abc1234', 'minor'), '1.3.0');
-  assert.equal(version.next('1.2.0-dev.abc1234', 'major'), '2.0.0');
-});
-
-test('an unknown level is refused rather than guessed', () => {
-  assert.throws(() => version.next('1.2.3', 'pathc'), /unknown bump level/);
-  assert.throws(() => version.next('1.2.3', ''), /unknown bump level/);
-});
-
-test('an unreleasable current version is refused', () => {
-  assert.throws(() => version.next('not-a-version', 'patch'), /not a releasable version/);
-});
-
 /* -------------------------------------------------------------- tags <-> refs */
 
-test('a tag is the version with one v, and only that', () => {
-  assert.equal(version.tagFor('1.2.3'), 'v1.2.3');
-  assert.throws(() => version.tagFor('nope'), /not a releasable version/);
+test('the parser reads exactly the tag release-it is configured to write', () => {
+  // Two owners, one format: .release-it.cjs writes the tag, versionFromTag
+  // reads it, and nothing else connects them. If someone changes tagName to
+  // `release-${version}` this fails here rather than in CI on a real release.
+  const { tagName } = require('../.release-it.cjs').git;
+  const produced = tagName.replace('${version}', '1.2.3');
+  assert.equal(version.versionFromTag(produced), '1.2.3', `release-it writes "${tagName}"`);
 });
 
 test('reads a version from both a bare tag and a full ref', () => {
@@ -92,8 +63,13 @@ test('a ref that does not name a version reads as none', () => {
   }
 });
 
-test('tagFor and versionFromTag round-trip', () => {
-  assert.equal(version.versionFromTag(version.tagFor('4.5.6')), '4.5.6');
+test('release-it is configured not to publish the GitHub Release itself', () => {
+  // CI owns the release, because electron-builder's update metadata does not
+  // exist until the build runs. Two publishers writing one release is how
+  // assets go missing from it.
+  const cfg = require('../.release-it.cjs');
+  assert.equal(cfg.github.release, false);
+  assert.equal(cfg.npm.publish, false, 'this is an app, not a package');
 });
 
 /* --------------------------------------------------------------- dev versions */

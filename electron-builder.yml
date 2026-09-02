@@ -16,6 +16,19 @@ files:
   - package.json
   - "!**/*.map"
 
+# Declared so electron-builder emits update metadata during the build:
+# `latest.yml`, `latest-mac.yml` and the `.blockmap` files. Those are what
+# describes a release to an updater; without them a GitHub Release is a folder
+# of installers that nothing can read as "a version".
+#
+# It does NOT publish from here. Every build runs `--publish never` and CI
+# attaches the files to the release itself, so there is exactly one publisher
+# and no GH_TOKEN in the platform build jobs.
+publish:
+  provider: github
+  owner: azuretek
+  repo: claw-desktop
+
 # Unsigned on purpose: this is a personal fleet app, not a store submission.
 # macOS therefore quarantines the downloaded .dmg — see README for the one-line fix.
 mac:

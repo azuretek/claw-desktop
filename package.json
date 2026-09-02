@@ -16,12 +16,13 @@
     "build:mac": "electron-builder --mac --publish never",
     "build:win": "electron-builder --win --publish never",
     "build:linux": "electron-builder --linux --publish never",
-    "release": "node scripts/release.js",
+    "release": "release-it",
     "build:version": "node scripts/build-version.js"
   },
   "devDependencies": {
     "electron": "^44.1.1",
     "electron-builder": "^26.15.3",
+    "release-it": "^21.0.2",
     "sharp": "^0.35.4"
   },
   "repository": {

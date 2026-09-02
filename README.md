@@ -344,25 +344,38 @@ Windows on Windows. Two ways:
 ## Releasing
 
 ```sh
-npm run release                 # patch: 1.0.0 -> 1.0.1
+npm run release                 # asks for the bump
+npm run release -- patch        # 1.0.0 -> 1.0.1
 npm run release -- minor        # 1.0.0 -> 1.1.0
 npm run release -- major        # 1.0.0 -> 2.0.0
 npm run release -- patch --dry-run
 ```
 
-That bumps `package.json`, commits, tags `vX.Y.Z`, and pushes. CI then builds
-both platforms and publishes a GitHub Release with the installers attached.
+[release-it](https://github.com/release-it/release-it) bumps `package.json` and
+the lockfile, commits, tags `vX.Y.Z`, and pushes. CI then builds both platforms
+and publishes a GitHub Release with the installers attached. Configuration and
+the reasoning behind it are in `.release-it.cjs`.
 
 It refuses, with nothing written, if you are not on `main`, the tree is dirty,
-`HEAD` disagrees with `origin/main`, the tag already exists, or the tests fail.
-Every one of those is a state where the release would name a commit that CI is
-not going to build.
+the branch has no upstream, or the tests fail. Every one of those is a state
+where the release would name a commit CI is not going to build.
+
+**Why not semantic-release or release-please:** both decide the version by
+parsing Conventional Commits, and this repo does not write them — 1 of 27
+subjects matches. Adopting either means rewriting a deliberate commit style to
+satisfy a parser, and until that happened every release would be classified "no
+release". release-it asks for the bump instead.
+
+**The GitHub Release is created by CI, not by release-it** (`github.release:
+false`). It has to be: electron-builder emits `latest.yml` / `latest-mac.yml`
+during the build, so a release created locally would exist before those files
+do — and two publishers writing one release is how assets go missing from it.
 
 **Do not bump the version by hand.** `artifactName` in `electron-builder.yml`
 interpolates `${version}` from `package.json`, so a tag that disagrees with it
 publishes a release called `v1.1.0` containing files named
-`ClawDesktop-Setup-1.0.0-x64.exe`. The `version` job catches exactly that,
-before either platform build starts:
+`ClawDesktop-Setup-1.0.0-x64.exe`. release-it makes them agree by construction;
+the `version` job catches a tag pushed by hand, before either build starts:
 
 ```
 version check failed: tag says 1.1.0 but package.json says 1.0.0 —
@@ -388,6 +401,27 @@ in Settings that its filename carries.
 A dev version sorts *below* the release it is named for — semver puts a
 prerelease under its normal version — so a machine left on one is behind the
 next release rather than stranded above it.
+
+### Auto-update
+
+Not wired up yet, but every release now carries what an updater needs:
+`latest.yml`, `latest-mac.yml` and per-file `.blockmap`s, emitted because
+`electron-builder.yml` declares a `publish` provider.
+
+Adding [electron-updater](https://www.electron.build/auto-update) would work on
+**Windows only**, and that limit is structural rather than a configuration gap:
+
+- **Windows works unsigned.** `NsisUpdater.verifySignature()` reads
+  `publisherName` from `app-update.yml`, and `if (publisherName == null) return
+  null` — an unsigned build has no publisher, so verification is skipped and the
+  update proceeds.
+- **macOS cannot.** `MacUpdater` hands the download to native **Squirrel.Mac**,
+  which requires a valid signature on the running bundle. An unsigned app fails
+  with `Could not get code signature for running application`. Only a Developer
+  ID fixes that.
+
+So macOS would be limited to *noticing* a new release and linking to it. It also
+costs the app its first runtime dependency — there are currently none at all.
 
 ## Known limits
 

@@ -1,12 +1,15 @@
 'use strict';
 
-// Version arithmetic for releases, kept separate from the script that performs
-// one so the decisions can be tested without touching git.
+// What version a CI build carries, and whether a tag build is self-consistent.
 //
-// There is no semver dependency because this app has no runtime dependencies at
-// all, and the subset needed here is small and closed: parse, bump, format,
-// compare a tag against package.json. Anything this rejects is something a
-// release should stop for anyway.
+// Bumping and tagging are release-it's job (see .release-it.cjs); this is the
+// half release-it cannot do, because it concerns builds that are not releases:
+// naming an untagged build for its commit, and refusing a tag that disagrees
+// with package.json.
+//
+// No semver dependency: the app has no runtime dependencies, this runs in CI
+// where installing one is not free, and the subset needed is small and closed.
+// Anything this rejects is something a build should stop for anyway.
 
 // `MAJOR.MINOR.PATCH`, optionally `-prerelease`, and nothing else. Deliberately
 // stricter than semver proper: build metadata (`+sha`) is not accepted, because
@@ -14,8 +17,6 @@
 // in a URL. Prerelease identifiers are limited to the same alphabet for the
 // same reason.
 const VERSION_RE = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/;
-
-const LEVELS = ['major', 'minor', 'patch'];
 
 /** Parse a version string, or null if it is not one we will release. */
 function parse(version) {
@@ -34,34 +35,13 @@ function format({ major, minor, patch, prerelease }) {
 }
 
 /**
- * The next release version.
- *
- * A prerelease is dropped rather than bumped: `1.2.0-dev.abc` releasing as a
- * patch is `1.2.0`, not `1.2.1`. The prerelease was always a build heading
- * *towards* that number, so bumping past it would silently skip a version.
- */
-function next(current, level) {
-  const v = parse(current);
-  if (!v) throw new Error(`not a releasable version: ${current}`);
-  if (!LEVELS.includes(level)) throw new Error(`unknown bump level: ${level} (want ${LEVELS.join('|')})`);
-
-  if (v.prerelease && level === 'patch') return format({ ...v, prerelease: null });
-  if (level === 'major') return format({ major: v.major + 1, minor: 0, patch: 0 });
-  if (level === 'minor') return format({ major: v.major, minor: v.minor + 1, patch: 0 });
-  return format({ major: v.major, minor: v.minor, patch: v.patch + 1 });
-}
-
-/** The git tag for a version. One direction, one format, no variants. */
-function tagFor(version) {
-  if (!parse(version)) throw new Error(`not a releasable version: ${version}`);
-  return `v${version}`;
-}
-
-/**
  * The version a tag or ref names, or null.
  *
  * Accepts both the bare tag and the full ref, because CI hands over
  * `refs/tags/v1.2.3` while a person types `v1.2.3`.
+ *
+ * The `v` prefix is not decided here — `.release-it.cjs` owns `tagName` — so
+ * this only has to read what that produces.
  */
 function versionFromTag(ref) {
   const tag = String(ref || '').replace(/^refs\/tags\//, '');
@@ -102,6 +82,10 @@ function devVersion(base, commit) {
  * different version. It is invisible in the build log and permanent once the
  * release is published.
  *
+ * release-it makes the two agree by construction, which is exactly why this
+ * still exists: a tag pushed by hand bypasses release-it entirely, and that is
+ * the case worth catching.
+ *
  * @returns {{ok: true, version: string} | {ok: false, reason: string}}
  */
 function checkTag(ref, packageVersion) {
@@ -117,4 +101,4 @@ function checkTag(ref, packageVersion) {
   return { ok: true, version: tagged };
 }
 
-module.exports = { parse, format, next, tagFor, versionFromTag, devVersion, checkTag, LEVELS };
+module.exports = { parse, format, versionFromTag, devVersion, checkTag };
