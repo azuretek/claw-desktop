@@ -102,9 +102,28 @@ npm run icons            # regenerate PNGs from src/assets/openclaw.svg
 Icons are **committed** deliberately, so a clean clone builds without `sharp`.
 Re-run `npm run icons` only when the artwork changes.
 
-Building Windows installers on macOS needs Wine for resource editing. The
-supported path is the `desktop-release` GitHub Actions workflow, which builds each
-platform on its own runner — push a `desktop-v*` tag and collect the artifacts.
+Building Windows installers on macOS needs Wine for resource editing, so build
+Windows on Windows. Two ways:
+
+- **On the Windows box directly** — fastest, and costs no CI minutes:
+
+  ```
+  gh repo clone azuretek/home_server
+  cd home_server\desktop\openclaw-desktop
+  npm ci
+  npm run build:win
+  dist\OpenClaw-Setup-1.0.0-x64.exe /S     :: /S installs silently, per-user
+  ```
+
+  It installs to `%LOCALAPPDATA%\Programs\OpenClaw`. Use `gh repo clone` rather
+  than `git clone git@…`: Git for Windows ships its own `ssh` that cannot see keys
+  held by the Windows OpenSSH agent, so an SSH clone fails with
+  `Permission denied (publickey)` even when `ssh -T git@github.com` succeeds.
+
+- **`desktop-release` GitHub Actions workflow** — builds each platform on its own
+  runner. Push a `desktop-v*` tag to cut a release, or run it manually for
+  artifacts. Note that private-repo minutes bill at 2× for Windows and 10× for
+  macOS, so prefer a local build for routine work.
 
 ## Known limits
 
