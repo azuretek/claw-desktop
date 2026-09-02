@@ -97,14 +97,43 @@ Two caveats worth knowing:
   markup, which is not an API. It fills only empty fields, runs at most once per
   load, and if the gate never appears it does nothing. Token mode is the durable
   path; prefer it.
-- **Each gateway gets its own Electron session partition** (`persist:gw-<id>`).
-  Device pairing is per browser profile, so a shared partition would make two
-  gateways overwrite each other's device identity. The cost is that switching
-  gateways recreates the window, and each gateway pairs once on its own.
+- **All gateways share one session**, exactly as they would share one browser
+  profile. Chromium already keys site storage by origin, so gateways on
+  different origins are isolated without help. An earlier build gave each
+  gateway entry its own `persist:` partition; because the partition name came
+  from the entry's UUID, editing a URL — or upgrading — threw away the device
+  identity, and the Gateway reported a login from an unrecognised client.
+  Removing a gateway now deletes its credentials but deliberately leaves its
+  site data, so re-adding it does not look like a new device. Use
+  `openclaw devices revoke` to actually sever one.
+
+## Window chrome
+
+The main window is frameless on macOS and Windows, so the app's colour runs to
+the top edge and the window controls float over the content.
+
+This works because the Control UI supports a native host directly: its stylesheet
+reads marker classes on `<html>` that it never sets itself — `openclaw-native-macos`
+and `openclaw-native-web-chrome` — and under them it grows its own header rows to
+`--openclaw-native-titlebar-height` and insets its controls to clear the native
+window buttons. The app sets the class; the UI's header *becomes* the title bar.
+The app adds only the one thing the UI has no way to know: which regions drag the
+window (`.chat-pane__header` / `.side-panel__header`, with every interactive
+descendant carved back out as `no-drag`).
+
+The obvious alternative — reserve a strip and push the page down — does not work,
+and the reason is worth recording: `vh` is always the **whole** window, so a
+page sized `height: 100vh` stays window-height and lands exactly the strip's
+height below the fold. Measured on a probe page: 754px of content in a 720px
+window.
+
+Linux keeps its normal frame; window managers vary too much to be confident the
+user can still move and close a frameless window.
 
 ## Settings
 
-Everything lives in one window (**Cmd/Ctrl+,**, or the tray menu):
+Everything lives in one window (**Cmd/Ctrl+,**, or the tray menu). It keeps a
+normal OS title bar, drawn dark via `nativeTheme`:
 
 - **Gateways** — add, remove, edit, test, switch. Each row shows what the app will
   sign in with. Switching is also in the tray menu.
@@ -181,6 +210,7 @@ Windows on Windows. Two ways:
 ```
 src/main.js          app lifecycle, window, tray, menus, navigation guards
 src/certs.js         trust-on-first-use certificate pinning
+src/chrome.js        frameless window chrome + Control UI native-host mode
 src/config.js        atomic JSON config store (no secrets)
 src/secrets.js       per-gateway token/password/headers, safeStorage-encrypted
 src/defaults.js      suggested gateways and defaults  ← edit for a new machine

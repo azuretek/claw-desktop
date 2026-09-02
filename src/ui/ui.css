@@ -96,6 +96,14 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 22px 0 0; }
 .editor .row > input { flex: 1; min-width: 0; }
 .hint { margin-top: 6px; }
 
+/* Drag region for the frameless main window (see src/chrome.js). Only used by
+   error.html; the settings window keeps a normal OS title bar. */
+.dragbar {
+  position: fixed; top: 0; left: 0; right: 0; height: 50px;
+  -webkit-app-region: drag; app-region: drag;
+}
+.dragbar ~ * button { -webkit-app-region: no-drag; app-region: no-drag; }
+
 /* error page */
 .center { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; text-align: center; padding: 0 40px; }
 .center img { width: 76px; height: 76px; opacity: .9; margin-bottom: 18px; }

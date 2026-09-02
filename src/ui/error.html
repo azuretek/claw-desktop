@@ -8,6 +8,11 @@
   <link rel="stylesheet" href="ui.css">
 </head>
 <body>
+  <!-- The main window is frameless on macOS and Windows, and this page is the
+       one thing in it that is ours. Without a drag region the window cannot be
+       moved while an error is showing. The content below is vertically centred,
+       so an overlay strip covers nothing. -->
+  <div class="dragbar"></div>
   <div class="center">
     <img src="../assets/openclaw.svg" alt="">
     <h1 id="headline">Cannot reach the gateway</h1>

@@ -8,6 +8,7 @@ const path = require('node:path');
 const https = require('node:https');
 const config = require('./config');
 const certs = require('./certs');
+const chrome = require('./chrome');
 const secrets = require('./secrets');
 const defaults = require('./defaults');
 
@@ -87,19 +88,21 @@ function schedulePersist() {
 
 /* ------------------------------------------------------------------ session */
 
-// One persistent partition per gateway. Device pairing is per browser profile —
-// the Control UI generates a device identity and stores its per-device token in
-// site storage — so a single shared partition would make two gateways overwrite
-// each other's identity and re-pair on every switch. Partitions also keep a
-// work gateway's cookies out of a personal one.
-function partitionFor(id) {
-  return id ? `persist:gw-${id}` : 'persist:openclaw-default';
-}
-
-function sessionForGateway(gw) {
-  return session.fromPartition(partitionFor(gw && gw.id));
-}
-
+// All gateways share one session, exactly as they would share one browser
+// profile.
+//
+// An earlier version gave each gateway entry its own `persist:` partition,
+// reasoning that device pairing is per browser profile. That was wrong twice
+// over. Chromium already keys site storage — localStorage, IndexedDB, cookies,
+// cache — by origin, so two gateways at different origins are isolated inside
+// one session anyway; the partition bought nothing. And because the partition
+// name was derived from the entry's UUID, the app threw away its device
+// identity the moment the entry changed, so the Gateway saw a brand-new device
+// and reported a login from an unrecognised client. Editing a URL, removing and
+// re-adding a gateway, or simply upgrading was enough to trigger it.
+//
+// Sharing the session keeps one stable device identity per gateway origin,
+// which is what "pair once" is supposed to mean.
 function configureSession(ses, gw) {
   const granted = new Set(['notifications', 'clipboard-read', 'clipboard-sanitized-write', 'fullscreen', 'media', 'pointerLock']);
 
@@ -111,25 +114,38 @@ function configureSession(ses, gw) {
   ses.setPermissionCheckHandler((_wc, permission, requestingOrigin) =>
     requestingOrigin === activeOrigin() && granted.has(permission));
 
-  applyHeaders(ses, gw);
+  applyHeaders(ses);
 }
 
 // Extra request headers for gateways behind an authenticating proxy — Cloudflare
 // Access, a shared-secret header, Basic auth on a reverse proxy.
 //
-// Scoped to the gateway's own origin by the `urls` filter, which is the whole
-// point: a header set here is a credential, and it must never ride along on a
-// request to some third-party host the page happens to load.
-function applyHeaders(ses, gw) {
-  const origin = gw ? originOf(gw.url) : null;
-  const headers = gw ? secrets.load(gw.id).headers : [];
+// Matched per request against the origin of the gateway that owns them, which is
+// the whole point: a header set here is a credential, and it must never ride
+// along on a request to some third-party host the page happens to load. Keying
+// the lookup on the request's own origin (rather than the active gateway's) also
+// means one listener covers every gateway and never needs re-registering.
+function headersByOrigin() {
+  const map = new Map();
+  for (const gw of config.get().gateways) {
+    const origin = originOf(gw.url);
+    const headers = secrets.load(gw.id).headers;
+    if (origin && headers.length) map.set(origin, headers);
+  }
+  return map;
+}
+
+function applyHeaders(ses) {
+  const map = headersByOrigin();
   // Electron keeps only one listener per session for this event, so re-running
   // this after a credential change replaces the old set rather than stacking.
-  if (!origin || headers.length === 0) {
+  if (map.size === 0) {
     ses.webRequest.onBeforeSendHeaders(null);
     return;
   }
-  ses.webRequest.onBeforeSendHeaders({ urls: [`${origin}/*`] }, (details, callback) => {
+  ses.webRequest.onBeforeSendHeaders({ urls: ['<all_urls>'] }, (details, callback) => {
+    const headers = map.get(originOf(details.url));
+    if (!headers) return callback({ requestHeaders: details.requestHeaders });
     const next = { ...details.requestHeaders };
     for (const h of headers) next[h.name] = h.value;
     callback({ requestHeaders: next });
@@ -307,14 +323,11 @@ function attachNavigationGuards(wc) {
 
 function createMainWindow() {
   const cfg = config.get();
-  const gw = config.activeGateway();
-  // A window's partition is fixed at construction, so switching gateways
-  // recreates the window (see switchGateway) rather than just navigating.
-  const partition = partitionFor(gw && gw.id);
-  configureSession(session.fromPartition(partition), gw);
+  configureSession(session.defaultSession, config.activeGateway());
 
   mainWindow = new BrowserWindow({
     ...restoredBounds(),
+    ...chrome.windowOptions(),
     minWidth: defaults.minWindow.width,
     minHeight: defaults.minWindow.height,
     show: false,
@@ -324,7 +337,6 @@ function createMainWindow() {
     icon: process.platform === 'linux' ? path.join(ASSETS, 'icon.png') : undefined,
     webPreferences: {
       preload: PRELOAD,
-      partition,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -341,6 +353,7 @@ function createMainWindow() {
 
   wc.on('did-finish-load', () => {
     wc.setZoomLevel(config.get().zoomLevel || 0);
+    chrome.applyToPage(wc);
     maybeAutofill(wc);
   });
 
@@ -513,23 +526,9 @@ function buildTray() {
   ]));
 }
 
-function recreateMainWindow() {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    const old = mainWindow;
-    mainWindow = null;
-    // destroy(), not close(): close() is intercepted by the close-to-tray
-    // handler, which would hide the old window and leave it alive.
-    old.destroy();
-  }
-  createMainWindow();
-  mainWindow.once('ready-to-show', () => { mainWindow.show(); mainWindow.focus(); });
-}
-
 function switchGateway(id) {
-  const previous = config.get().activeGatewayId;
   config.update({ activeGatewayId: id });
   buildTray();
-  if (previous !== id) return recreateMainWindow();
   showMainWindow();
   loadActiveGateway();
 }
@@ -647,17 +646,20 @@ function registerIpc() {
   ipcMain.handle('app:update-gateway', (_e, id, patch) => {
     config.updateGateway(id, patch || {});
     buildTray();
-    // The header filter is keyed on the origin, so a changed URL invalidates it.
-    if (id === config.get().activeGatewayId) applyHeaders(sessionForGateway(config.activeGateway()), config.activeGateway());
+    // Headers are matched by origin, so a changed URL changes which requests
+    // they belong to.
+    applyHeaders(session.defaultSession);
     return currentState();
   });
   ipcMain.handle('app:remove-gateway', (_e, id) => {
-    // Credentials and site data are per gateway; leaving either behind would
-    // hand the next gateway that reuses the id someone else's session.
+    // Drop the credentials, but deliberately leave the origin's site data alone:
+    // it holds the paired device identity, and wiping it would make a re-added
+    // gateway look like a brand-new device and raise a fresh login alert. Use
+    // the gateway's own `openclaw devices revoke` to actually sever a device.
     secrets.forget(id);
-    session.fromPartition(partitionFor(id)).clearStorageData().catch(() => {});
     config.removeGateway(id);
     buildTray();
+    applyHeaders(session.defaultSession);
     return currentState();
   });
   // Token and password are applied at connect time, so no session work here.
@@ -668,14 +670,12 @@ function registerIpc() {
   });
   ipcMain.handle('app:add-header', (_e, id, name, value) => {
     const res = secrets.addHeader(id, name, value);
-    const gw = config.get().gateways.find((g) => g.id === id);
-    if (res.ok && gw) applyHeaders(sessionForGateway(gw), gw);
+    if (res.ok) applyHeaders(session.defaultSession);
     return { ...currentState(), saved: res };
   });
   ipcMain.handle('app:remove-header', (_e, id, name) => {
     const res = secrets.removeHeader(id, name);
-    const gw = config.get().gateways.find((g) => g.id === id);
-    if (res.ok && gw) applyHeaders(sessionForGateway(gw), gw);
+    if (res.ok) applyHeaders(session.defaultSession);
     return { ...currentState(), saved: res };
   });
   ipcMain.handle('app:forget-cert', (_e, host) => {
@@ -713,6 +713,7 @@ if (!app.requestSingleInstanceLock()) {
 
     // The default session only ever serves our own file:// pages; the gateway
     // itself loads in a per-gateway partition configured by createMainWindow.
+    chrome.applyTheme();
     configureSession(session.defaultSession, null);
     certs.install(app, () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null));
 
