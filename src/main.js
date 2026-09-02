@@ -14,6 +14,7 @@ const certs = require('./certs');
 const chrome = require('./chrome');
 const overlay = require('./overlay');
 const profile = require('./profile');
+const updates = require('./updates');
 const secrets = require('./secrets');
 const defaults = require('./defaults');
 
@@ -891,6 +892,124 @@ function setZoom(delta, absolute) {
   config.update({ zoomLevel: level });
 }
 
+/* -------------------------------------------------------------------- updates */
+
+// How often a running app looks for a new release. Long, because the app is
+// meant to sit in the tray for weeks: the cost of noticing an update an hour
+// late is nothing, and the cost of hammering GitHub from every machine is a
+// rate limit on the one call that matters.
+const UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000;
+// Where a platform that cannot install for itself sends the user. Hard-coded
+// rather than read from electron-builder.yml's `publish` block: that file is not
+// packaged, so the app would be parsing something it does not ship.
+const RELEASES_URL = 'https://github.com/azuretek/claw-desktop/releases';
+// Long enough that a cold start is not competing with the gateway connection
+// for the network, and short enough to be within one sitting.
+const UPDATE_FIRST_CHECK_MS = 60 * 1000;
+
+let updater = null; // the electron-updater AppUpdater, or null where we do not check
+let updateReady = null; // version string once downloaded and installable
+let updateTimer = null;
+
+function updatePolicy() {
+  return updates.policy({ platform: process.platform, packaged: app.isPackaged });
+}
+
+/**
+ * Wire up update checking, if this build can do anything useful about one.
+ *
+ * Required late rather than at the top of the file: it is the app's only runtime
+ * dependency, and a source run has no use for it at all.
+ */
+function initUpdates() {
+  const plan = updatePolicy();
+  console.log(`[claw] updates: ${plan.action} (${plan.reason})`);
+  if (!plan.check) return;
+
+  const { autoUpdater } = require('electron-updater');
+  updater = autoUpdater;
+  updater.autoDownload = plan.autoDownload;
+  // Installing behind the user's back on quit is the wrong default for an app
+  // they close to the tray dozens of times a day; the restart is offered.
+  updater.autoInstallOnAppQuit = false;
+  updater.logger = { info: () => {}, warn: () => {}, error: (m) => console.error(`[claw] updater: ${m}`), debug: () => {} };
+
+  updater.on('update-available', (info) => onUpdateAvailable(info, plan));
+  updater.on('update-downloaded', (info) => onUpdateDownloaded(info));
+  updater.on('error', (err) => {
+    // Never a dialog. A machine that is offline, or behind a proxy, or hitting a
+    // rate limit must not interrupt whatever the user was doing to say so.
+    console.error(`[claw] update check failed: ${err && err.message}`);
+    if (pendingManualCheck) {
+      pendingManualCheck = false;
+      dialog.showMessageBox({ type: 'warning', message: 'Could not check for updates.', detail: String((err && err.message) || err), buttons: ['OK'] });
+    }
+  });
+  updater.on('update-not-available', () => {
+    if (!pendingManualCheck) return;
+    pendingManualCheck = false;
+    dialog.showMessageBox({ type: 'info', message: 'Claw Desktop is up to date.', detail: `You are on ${app.getVersion()}.`, buttons: ['OK'] });
+  });
+
+  setTimeout(() => void checkForUpdates('startup'), UPDATE_FIRST_CHECK_MS);
+  updateTimer = setInterval(() => void checkForUpdates('scheduled'), UPDATE_INTERVAL_MS);
+}
+
+let pendingManualCheck = false;
+
+async function checkForUpdates(trigger = 'manual') {
+  if (!updater) {
+    if (updates.shouldReportNoUpdate(trigger)) {
+      const plan = updatePolicy();
+      dialog.showMessageBox({ type: 'info', message: 'Updates are not available in this build.', detail: plan.reason, buttons: ['OK'] });
+    }
+    return;
+  }
+  pendingManualCheck = updates.shouldReportNoUpdate(trigger);
+  try {
+    await updater.checkForUpdates();
+  } catch {
+    // Deliberately silent. electron-updater emits 'error' *and* rejects for the
+    // same failure, so logging here too prints every update failure twice —
+    // which is exactly what a first run against a repo with no releases did.
+    // This catch exists only to stop the rejection going unhandled.
+  }
+}
+
+async function onUpdateAvailable(info, plan) {
+  pendingManualCheck = false;
+  // Windows downloads in the background and speaks once it can actually offer
+  // the restart, so there is nothing useful to say yet.
+  if (plan.action === updates.INSTALL) return;
+
+  const { message, detail } = updates.availableMessage({
+    action: plan.action, version: info.version, current: app.getVersion(),
+  });
+  const { response } = await dialog.showMessageBox({
+    type: 'info', message, detail, buttons: ['Open release page', 'Later'], defaultId: 0, cancelId: 1,
+  });
+  if (response === 0) await shell.openExternal(`${RELEASES_URL}/tag/v${info.version}`);
+}
+
+async function onUpdateDownloaded(info) {
+  updateReady = info.version;
+  buildTray(); // so "Restart to update" appears without waiting for the dialog
+  const { response } = await dialog.showMessageBox({
+    type: 'info',
+    message: `Claw Desktop ${info.version} is ready.`,
+    detail: 'Restart to finish updating. You can also keep working and restart later.',
+    buttons: ['Restart now', 'Later'],
+    defaultId: 0,
+    cancelId: 1,
+  });
+  if (response === 0) {
+    quitting = true;
+    // isSilent false so the installer's progress is visible; isForceRunAfter so
+    // the app comes back rather than leaving the user staring at a closed window.
+    updater.quitAndInstall(false, true);
+  }
+}
+
 function buildMenu() {
   const isMac = process.platform === 'darwin';
   const template = [
@@ -898,6 +1017,7 @@ function buildMenu() {
       label: app.name,
       submenu: [
         { role: 'about' },
+        { label: 'Check for updates…', click: () => { void checkForUpdates('manual'); } },
         { type: 'separator' },
         { label: 'Settings…', accelerator: 'Cmd+,', click: () => openSettings() },
         { type: 'separator' },
@@ -911,7 +1031,10 @@ function buildMenu() {
     {
       label: 'File',
       submenu: [
-        ...(isMac ? [] : [{ label: 'Settings…', accelerator: 'Ctrl+,', click: () => openSettings() }]),
+        ...(isMac ? [] : [
+          { label: 'Settings…', accelerator: 'Ctrl+,', click: () => openSettings() },
+          { label: 'Check for updates…', click: () => { void checkForUpdates('manual'); } },
+        ]),
         { label: 'Reload', accelerator: 'CmdOrCtrl+R', click: () => (showingError ? loadActiveGateway() : page()?.reload()) },
         { label: 'Reconnect to gateway', accelerator: 'CmdOrCtrl+Shift+R', click: () => loadActiveGateway() },
         { label: 'Clear cache and reload', click: () => { void clearCacheAndReload(); } },
@@ -957,6 +1080,13 @@ function buildTray() {
   const cfg = config.get();
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Open Claw Desktop', click: showMainWindow },
+    // Only once there is genuinely something to restart into. A permanently
+    // present "Restart to update" that usually does nothing teaches people to
+    // ignore it, which is the opposite of what it is for.
+    ...(updateReady ? [{
+      label: `Restart to update to ${updateReady}`,
+      click: () => { quitting = true; updater.quitAndInstall(false, true); },
+    }] : []),
     { label: 'Reconnect', click: () => { showMainWindow(); loadActiveGateway(); } },
     // Also on the tray, not just the File menu: Windows runs with
     // `autoHideMenuBar`, so the menu is behind an Alt press exactly when the
@@ -1204,6 +1334,8 @@ if (!app.requestSingleInstanceLock()) {
     const shortcut = registerShortcut();
     if (!shortcut.ok) console.warn(`[claw] global shortcut not registered: ${shortcut.error}`);
 
+    initUpdates();
+
     if (process.argv.includes('--hidden')) config.update({ startHidden: true });
 
     // Before the first load, not after: clearing a service worker out from
@@ -1217,7 +1349,10 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on('before-quit', () => { quitting = true; persistBounds(); });
-  app.on('will-quit', () => globalShortcut.unregisterAll());
+  app.on('will-quit', () => {
+    globalShortcut.unregisterAll();
+    if (updateTimer) clearInterval(updateTimer);
+  });
 
   app.on('window-all-closed', () => {
     // With close-to-tray on, the window hides rather than closing, so reaching

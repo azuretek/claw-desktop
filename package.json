@@ -32,5 +32,8 @@
   "homepage": "https://github.com/azuretek/claw-desktop",
   "bugs": {
     "url": "https://github.com/azuretek/claw-desktop/issues"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   }
 }

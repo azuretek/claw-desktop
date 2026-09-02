@@ -29,12 +29,30 @@ publish:
   owner: azuretek
   repo: claw-desktop
 
-# Unsigned on purpose: this is a personal fleet app, not a store submission.
-# macOS therefore quarantines the downloaded .dmg — see README for the one-line fix.
+# Signing is credential-driven, not configured here.
+#
+# There is deliberately no `identity: null`. That key *forces* an unsigned build
+# and would have to be deleted the day a certificate exists — a code change to
+# turn on something that should be a credential change. Instead the standard
+# electron-builder behaviour applies: sign if an identity is discoverable, warn
+# and continue unsigned if not.
+#
+#   unsigned (today)  no Developer ID in the keychain -> "skipped macOS code
+#                     signing". CI additionally sets CSC_IDENTITY_AUTO_DISCOVERY
+#                     false so a runner can never pick up a stray identity.
+#   signed            a "Developer ID Application" certificate in the keychain,
+#                     or CSC_LINK + CSC_KEY_PASSWORD in CI. Then set
+#                     `notarize: true` here and provide APPLE_ID,
+#                     APPLE_APP_SPECIFIC_PASSWORD and APPLE_TEAM_ID.
+#
+# Notarization stays off until then: it is an upload to Apple that fails without
+# a Developer ID, so enabling it early only breaks the build.
+#
+# Until signed, macOS quarantines the downloaded .dmg — see README for the fix,
+# and src/updates.js for why macOS cannot auto-update without this.
 mac:
   category: public.app-category.productivity
   icon: build/icon.png
-  identity: null
   notarize: false
   artifactName: ClawDesktop-${version}-${arch}.${ext}
   target:

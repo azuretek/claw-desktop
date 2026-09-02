@@ -201,14 +201,50 @@ Claw Desktop 1.0.0 (a1b2c3d4e5, built 2026-09-02 08:41Z) · Electron 44.1.1 · �
   while the app runs. Install the PWA alongside if you need waking when closed.
 - **Unsigned builds.** No Apple Developer ID or Windows signing certificate —
   hence the `xattr` step and the SmartScreen warning.
-- **No auto-update yet.** Releases already carry the metadata for it
-  (`latest.yml`, `latest-mac.yml`, `.blockmap`s). Adding
-  [electron-updater](https://github.com/electron-userland/electron-builder/tree/master/packages/electron-updater)
-  would work on **Windows only**: `NsisUpdater` skips signature verification
-  when the build has no `publisherName`, but macOS hands off to Squirrel.Mac,
-  which requires a signed bundle and fails with `Could not get code signature
-  for running application`. macOS could only be told a release exists.
+- **Auto-update is Windows-only.** See below — it is a signing limit, not a
+  configuration gap.
 - **Not a node.** No screen, camera, or `system.run`. That is Windows Hub's job.
+
+## Updates
+
+The app checks for a new release a minute after launch and every six hours
+after, and on demand from **Check for updates…** on the File (or app) menu.
+What it does with one depends on the platform, because installing an update
+requires a signed build on macOS and does not on Windows:
+
+| Platform | Behaviour | Why |
+|---|---|---|
+| **Windows** | Downloads in the background, then offers **Restart to update** — in a dialog and on the tray menu | `NsisUpdater` skips signature verification when the build has no `publisherName`, so an unsigned build updates normally |
+| **macOS** | Tells you a release exists and links to it; you replace the app by hand | `MacUpdater` hands off to native Squirrel.Mac, which requires a valid signature on the running bundle and fails with `Could not get code signature for running application` |
+| **Linux** | Same as macOS | AppImage updates work in principle, but the app is not distributed that way and the path is untested |
+
+Automatic checks are silent unless there is something to act on; a manual check
+always answers, including "you are up to date". A failed check — offline, proxy,
+rate limit — is logged and never interrupts you.
+
+macOS becomes the same as Windows the moment builds are signed: set
+`MAC_SIGNED = true` in [src/updates.js](src/updates.js). That is the only code
+change; the rest is credentials.
+
+### Enabling signed builds
+
+Nothing in the repo forces an unsigned build — there is no `identity: null`. The
+standard electron-builder behaviour applies: sign if an identity is
+discoverable, warn and continue if not.
+
+- **macOS** — an [Apple Developer Program](https://developer.apple.com/programs/)
+  membership ($99/year) is required for a *Developer ID Application*
+  certificate; without one, notarization is rejected too. Install the
+  certificate in the keychain (or set `CSC_LINK` + `CSC_KEY_PASSWORD` in CI),
+  set `notarize: true` in `electron-builder.yml`, and provide `APPLE_ID`,
+  `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID`. Notarization also needs
+  `hardenedRuntime`. CI currently sets `CSC_IDENTITY_AUTO_DISCOVERY: false` so a
+  runner cannot pick up a stray identity — remove that when signing.
+- **Windows** — only removes the SmartScreen warning; it is **not** needed for
+  auto-update. [Azure Artifact Signing](https://azure.microsoft.com/en-us/pricing/details/artifact-signing/)
+  (formerly Trusted Signing) is $9.99/month and open to individual developers,
+  though identity validation is currently US/Canada only. A traditional OV
+  certificate costs more and requires a hardware token.
 
 ---
 
@@ -255,6 +291,7 @@ src/certs.js         trust-on-first-use certificate pinning
 src/secrets.js       per-gateway token/password/headers, safeStorage-encrypted
 src/config.js        atomic JSON config store (no secrets)
 src/overlay.js       supervises the settings overlay so it cannot wedge the window
+src/updates.js       per-platform update policy (install, notify, or neither)
 src/build-info.js    reads the packed-in commit; formats the Settings build line
 src/profile.js       one-time profile move for the OpenClaw -> Claw Desktop rename
 src/defaults.js      suggested gateways and defaults  ← edit for a new machine
