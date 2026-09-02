@@ -29,6 +29,18 @@ const PRELOAD = path.join(__dirname, 'preload.js');
 }
 
 let mainWindow = null;
+// The gateway page — and the app's own error and first-run pages — live in a
+// child view rather than in the window's own WebContents, because a child view
+// can be given bounds and a window's own contents cannot.
+//
+// On Windows that is the entire mechanism behind the reserved title strip: the
+// view starts below the caption buttons, so the page's viewport genuinely
+// excludes them and nothing it draws can land underneath — not a header, not a
+// docked panel, not a `position: fixed` overlay anchored to the corner. On
+// macOS and Linux the view simply fills the window and this costs nothing.
+let pageView = null;
+// The strip above it, on Windows only. See ui/titlebar.html.
+let stripView = null;
 // Settings is a view layered over the main window's contents, not a window of
 // its own. It stays a separate WebContents on purpose: the page holds the
 // privileged IPC bridge, and the preload grants that bridge only to `file://`
@@ -66,6 +78,34 @@ function originOf(url) {
 function activeOrigin() {
   const gw = config.activeGateway();
   return gw ? originOf(gw.url) : null;
+}
+
+/**
+ * The WebContents showing the gateway — or, on a first run or a failed connect,
+ * one of the app's own pages. Everything that used to address
+ * `mainWindow.webContents` addresses this instead.
+ */
+function page() {
+  return pageView && !pageView.webContents.isDestroyed() ? pageView.webContents : null;
+}
+
+/**
+ * Position the child views. A child view does not track its parent's size, so
+ * this has to run on every event that changes it; one missed event leaves the
+ * page the wrong size or the modal floating in a corner.
+ *
+ * The strip's height is the only thing the page gives up, and it is zero
+ * everywhere except Windows.
+ */
+function layoutViews() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const [width, height] = mainWindow.getContentSize();
+  const top = chrome.contentInset().top;
+  if (stripView) stripView.setBounds({ x: 0, y: 0, width, height: top });
+  if (pageView) pageView.setBounds({ x: 0, y: top, width, height: Math.max(0, height - top) });
+  // The modal covers everything including the strip: the scrim is meant to dim
+  // the whole window, and the settings page carries its own drag band.
+  if (settingsView) settingsView.setBounds({ x: 0, y: 0, width, height });
 }
 
 function trayImage() {
@@ -197,7 +237,7 @@ function showError(detail) {
     url: detail.url || (gw ? gw.url : ''),
     label: gw ? gw.label : '',
   });
-  mainWindow.loadFile(path.join(UI_DIR, 'error.html'), { search: `?${params}` });
+  page()?.loadFile(path.join(UI_DIR, 'error.html'), { search: `?${params}` });
 }
 
 /* -------------------------------------------------------------- main window */
@@ -232,7 +272,7 @@ function loadActiveGateway() {
     showingError = false;
     settingsIsPage = true;
     closeSettings();
-    mainWindow.loadFile(path.join(UI_DIR, 'settings.html'), { search: settingsSearch({ firstRun: true }) });
+    page()?.loadFile(path.join(UI_DIR, 'settings.html'), { search: settingsSearch({ firstRun: true }) });
     return null;
   }
   showingError = false;
@@ -242,7 +282,7 @@ function loadActiveGateway() {
   const supplied = [creds.token && 'token', creds.password && 'password', creds.headers.length && `${creds.headers.length} header(s)`]
     .filter(Boolean).join(', ');
   console.log(`[claw] connecting to ${gw.label || gw.url} <${gw.url}>${supplied ? ` (supplying ${supplied})` : ''}`);
-  mainWindow.loadURL(withTokenHandoff(gw.url, creds.token));
+  page()?.loadURL(withTokenHandoff(gw.url, creds.token));
 }
 
 /* --------------------------------------------------------------- login gate */
@@ -367,6 +407,49 @@ function attachContextMenu(wc) {
   });
 }
 
+/* --------------------------------------------------------------- title strip */
+
+/**
+ * The strip the app draws above the page on Windows.
+ *
+ * Deliberately inert: no preload, no IPC bridge, no script (its CSP forbids
+ * one). It is a coloured, draggable band with a label, and the label is written
+ * in from here — the one place that knows which session is loaded. Giving it a
+ * bridge would mean a second privileged page for no gain.
+ */
+function createStrip() {
+  if (chrome.contentInset().top === 0) return null;
+  stripView = new WebContentsView({
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+  });
+  stripView.setBackgroundColor(currentTheme.surface);
+  mainWindow.contentView.addChildView(stripView);
+  const wc = stripView.webContents;
+  wc.loadFile(path.join(UI_DIR, 'titlebar.html'));
+  wc.once('did-finish-load', () => {
+    wc.insertCSS(chrome.stripCss()).catch(() => {});
+    applyThemeCss(wc);
+  });
+  return stripView;
+}
+
+/**
+ * Put the current session's name in the strip, or fall back to the app name.
+ *
+ * `executeJavaScript` rather than IPC because the strip has no preload to route
+ * a message through, and it is not subject to the page's CSP. The value is
+ * JSON-encoded, so a session named `</script>` or `'); …` is inert text.
+ */
+function setStripLabel(session) {
+  const wc = stripView && !stripView.webContents.isDestroyed() ? stripView.webContents : null;
+  if (!wc) return;
+  const text = session || 'Claw Desktop';
+  wc.executeJavaScript(
+    `document.getElementById('label').textContent = ${JSON.stringify(text)};`,
+    true,
+  ).catch(() => {});
+}
+
 function createMainWindow() {
   const cfg = config.get();
   configureSession(session.defaultSession, config.activeGateway());
@@ -381,6 +464,13 @@ function createMainWindow() {
     autoHideMenuBar: true,
     title: 'Claw Desktop',
     icon: process.platform === 'linux' ? path.join(ASSETS, 'icon.png') : undefined,
+  });
+
+  if (cfg.window.maximized) mainWindow.maximize();
+
+  createStrip();
+
+  pageView = new WebContentsView({
     webPreferences: {
       preload: PRELOAD,
       contextIsolation: true,
@@ -391,21 +481,26 @@ function createMainWindow() {
       allowRunningInsecureContent: false,
     },
   });
+  pageView.setBackgroundColor(currentTheme.surface);
+  mainWindow.contentView.addChildView(pageView);
 
-  if (cfg.window.maximized) mainWindow.maximize();
-
-  const wc = mainWindow.webContents;
+  const wc = pageView.webContents;
   attachNavigationGuards(wc);
+  layoutViews();
 
   // The Control UI sets document.title to "<session> — OpenClaw", and Electron
   // mirrors a page title onto the window by default. That put the upstream name
   // in our taskbar entry and window title even after the rename, which is the
   // one place a user actually reads it. Keep the page's session name — it is
   // genuinely useful when several windows are open — but under our own name.
-  mainWindow.on('page-title-updated', (event, title) => {
-    event.preventDefault();
+  //
+  // The event fires on the view now, not the window, so the title has to be set
+  // rather than merely amended: a view's title does not reach the window at all.
+  wc.on('page-title-updated', (_event, title) => {
     const session = title.replace(/\s*[—-]\s*OpenClaw\s*$/, '').trim();
-    mainWindow.setTitle(session && session !== title ? `${session} — Claw Desktop` : 'Claw Desktop');
+    const full = session && session !== title ? `${session} — Claw Desktop` : 'Claw Desktop';
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setTitle(full);
+    setStripLabel(session && session !== title ? session : null);
   });
 
   wc.on('did-finish-load', () => {
@@ -432,18 +527,15 @@ function createMainWindow() {
     showError({ errorCode: details.reason, errorDescription: `The window stopped responding (${details.reason}).` });
   });
 
-  // The overlay is positioned in pixels, so every one of these has to move it —
-  // a child view does not track its parent's size on its own, and one missed
-  // event leaves the modal covering part of the window or floating in a corner.
-  const trackOverlay = () => {
-    if (settingsView && mainWindow && !mainWindow.isDestroyed()) settingsView.setBounds(overlayBounds());
-  };
-  mainWindow.on('resize', () => { trackOverlay(); schedulePersist(); });
+  // Every event that changes the content size has to re-lay the views out — the
+  // page's own size now depends on this, not just the modal's, so a missed one
+  // is a page that does not fill the window rather than a cosmetic slip.
+  mainWindow.on('resize', () => { layoutViews(); schedulePersist(); });
   mainWindow.on('move', schedulePersist);
-  mainWindow.on('maximize', () => { trackOverlay(); schedulePersist(); });
-  mainWindow.on('unmaximize', () => { trackOverlay(); schedulePersist(); });
-  mainWindow.on('enter-full-screen', trackOverlay);
-  mainWindow.on('leave-full-screen', trackOverlay);
+  mainWindow.on('maximize', () => { layoutViews(); schedulePersist(); });
+  mainWindow.on('unmaximize', () => { layoutViews(); schedulePersist(); });
+  mainWindow.on('enter-full-screen', layoutViews);
+  mainWindow.on('leave-full-screen', layoutViews);
 
   mainWindow.on('close', (event) => {
     persistBounds();
@@ -455,9 +547,31 @@ function createMainWindow() {
     mainWindow.hide();
   });
 
-  mainWindow.once('ready-to-show', () => {
-    if (!config.get().startHidden) mainWindow.show();
+  // Child views die with the window, but the module-level handles do not, and a
+  // stale one would have `showMainWindow` hand work to a destroyed WebContents.
+  mainWindow.on('closed', () => {
+    pageView = null;
+    stripView = null;
+    settingsView = null;
   });
+
+  // `ready-to-show` is the window's own signal and it never fires now: the
+  // window has no content of its own, only child views. So the first paint of
+  // the *page* is what the window waits for. `dom-ready` rather than
+  // `did-finish-load` because subresources should not hold the window back, and
+  // `once` on both paths so a later navigation cannot re-show a window the user
+  // has since sent to the tray.
+  //
+  // The window's backgroundColor is the theme surface, so the gap before that
+  // fires shows the right colour rather than white.
+  if (!config.get().startHidden) {
+    const reveal = () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show(); };
+    wc.once('dom-ready', reveal);
+    // A gateway that never answers must not leave the app invisible with no way
+    // in but the tray; showing the window is also what makes the error page,
+    // which replaces the failed load, reachable.
+    setTimeout(reveal, 4000);
+  }
 
   loadActiveGateway();
   return mainWindow;
@@ -508,13 +622,6 @@ function adoptTheme(theme) {
 
 /* ---------------------------------------------------------- settings window */
 
-// The overlay covers the whole content area, not just the card: the scrim and
-// the click-outside-to-dismiss target are drawn by the page, so the page needs
-// the full area to draw them on.
-function overlayBounds() {
-  const [width, height] = mainWindow.getContentSize();
-  return { x: 0, y: 0, width, height };
-}
 
 // `frameless` rides in the URL rather than being fetched over IPC because the
 // page uses it for layout — how far down the card starts, to clear the drag
@@ -551,7 +658,7 @@ function openSettings(opts = {}) {
   const wc = settingsView.webContents;
   attachContextMenu(wc);
   mainWindow.contentView.addChildView(settingsView);
-  settingsView.setBounds(overlayBounds());
+  layoutViews();
   wc.loadFile(path.join(UI_DIR, 'settings.html'), { search: settingsSearch() });
   wc.once('did-finish-load', () => {
     applyThemeCss(wc);
@@ -569,7 +676,7 @@ function closeSettings() {
     mainWindow?.contentView.removeChildView(view);
   } catch { /* window already gone; the view goes with it */ }
   view.webContents.close();
-  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.focus();
+  page()?.focus();
 }
 
 /**
@@ -597,8 +704,15 @@ async function applyThemeCss(wc) {
 /** Re-theme every page of ours that is currently on screen. */
 function refreshThemedPages() {
   if (settingsView && !settingsView.webContents.isDestroyed()) applyThemeCss(settingsView.webContents);
+  // The strip is one of the app's own pages, and the one most visibly wrong if
+  // it lags: it sits directly against the UI, so a stale surface colour reads as
+  // a mismatched band across the top rather than as a slow repaint somewhere.
+  if (stripView && !stripView.webContents.isDestroyed()) {
+    applyThemeCss(stripView.webContents);
+    stripView.setBackgroundColor(currentTheme.surface);
+  }
   if ((settingsIsPage || showingError) && mainWindow && !mainWindow.isDestroyed()) {
-    applyThemeCss(mainWindow.webContents);
+    applyThemeCss(page());
   }
 }
 
@@ -606,7 +720,8 @@ function refreshThemedPages() {
 
 function setZoom(delta, absolute) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  const wc = mainWindow.webContents;
+  const wc = page();
+  if (!wc) return;
   const level = absolute !== undefined ? absolute : Math.max(-5, Math.min(5, wc.getZoomLevel() + delta));
   wc.setZoomLevel(level);
   config.update({ zoomLevel: level });
@@ -633,7 +748,7 @@ function buildMenu() {
       label: 'File',
       submenu: [
         ...(isMac ? [] : [{ label: 'Settings…', accelerator: 'Ctrl+,', click: () => openSettings() }]),
-        { label: 'Reload', accelerator: 'CmdOrCtrl+R', click: () => (showingError ? loadActiveGateway() : mainWindow?.webContents.reload()) },
+        { label: 'Reload', accelerator: 'CmdOrCtrl+R', click: () => (showingError ? loadActiveGateway() : page()?.reload()) },
         { label: 'Reconnect to gateway', accelerator: 'CmdOrCtrl+Shift+R', click: () => loadActiveGateway() },
         { type: 'separator' },
         isMac ? { role: 'close' } : { label: 'Quit', accelerator: 'Ctrl+Q', click: () => { quitting = true; app.quit(); } },
@@ -654,7 +769,7 @@ function buildMenu() {
         { label: 'Actual Size', accelerator: 'CmdOrCtrl+0', click: () => setZoom(0, 0) },
         { type: 'separator' },
         { role: 'togglefullscreen' },
-        { label: 'Toggle Developer Tools', accelerator: isMac ? 'Alt+Cmd+I' : 'Ctrl+Shift+I', click: () => mainWindow?.webContents.toggleDevTools() },
+        { label: 'Toggle Developer Tools', accelerator: isMac ? 'Alt+Cmd+I' : 'Ctrl+Shift+I', click: () => page()?.toggleDevTools() },
       ],
     },
     {
@@ -880,7 +995,7 @@ function registerIpc() {
   // must not repaint the window the user is actually looking at.
   ipcMain.on('chrome:theme', (event, report) => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
-    if (event.sender !== mainWindow.webContents) return;
+    if (event.sender !== page()) return;
     // The app's theme comes from the Control UI, never from one of our own
     // pages. Without this the first run — where the settings page *is* the main
     // window's content — would have the app take its colours from the very

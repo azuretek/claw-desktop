@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; style-src 'self';">
+  <title>Claw Desktop</title>
+  <link rel="stylesheet" href="ui.css">
+</head>
+<!-- The title strip reserved above the page on Windows.
+
+     It carries no controls on purpose. Windows draws the real minimise,
+     maximise and close buttons over its right end (titleBarOverlay), painted in
+     the same surface colour, so the two read as one bar — and because they are
+     the OS's own buttons, snap layouts and the taskbar preview keep working,
+     and the window can never be made unclosable by a CSS mistake of ours.
+
+     So everything here is either a drag region or text, and the CSP forbids
+     script outright: the label is written in by the main process, which is the
+     only thing that knows which gateway is loaded. See createStrip in main.js. -->
+<body class="strip-body">
+  <div class="strip">
+    <span class="strip__label" id="label">Claw Desktop</span>
+  </div>
+</body>
+</html>

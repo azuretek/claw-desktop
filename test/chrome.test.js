@@ -11,80 +11,73 @@ const chrome = require('../src/chrome');
 // Collapse whitespace so assertions describe the rule, not the indentation.
 const flat = (css) => css.replace(/\s+/g, ' ').trim();
 
-test('hostClass maps each platform to the Control UI marker it understands', () => {
+test('hostClass marks only macOS, where the UI header IS the title bar', () => {
   assert.strictEqual(chrome.hostClass('darwin'), 'openclaw-native-macos');
-  assert.strictEqual(chrome.hostClass('win32'), 'openclaw-native-web-chrome');
+  // Windows deliberately gets no marker class. The app draws a real strip above
+  // the page there, so the page should lay itself out as an ordinary page;
+  // setting the class would grow the UI's headers to titlebar height and inset
+  // them for buttons that are no longer over the page — reserving twice.
+  assert.strictEqual(chrome.hostClass('win32'), null);
   assert.strictEqual(chrome.hostClass('linux'), null);
+});
+
+test('the app owns the chrome on both desktop platforms', () => {
+  // `enabled` is not `hostClass !== null` any more: Windows owns its chrome
+  // through the reserved strip rather than through the marker class.
+  assert.strictEqual(chrome.enabled('darwin'), true);
+  assert.strictEqual(chrome.enabled('win32'), true);
   assert.strictEqual(chrome.enabled('linux'), false);
 });
 
-test('the Windows caption-button inset is measured, never hardcoded', () => {
-  // A constant cannot follow DPI changes, resize or maximise. A 150px guess was
+test('only Windows takes height away from the page', () => {
+  assert.strictEqual(chrome.contentInset('win32').top, chrome.STRIP_HEIGHT);
+  assert.ok(chrome.STRIP_HEIGHT > 0);
+  // macOS hands the page the whole window; the UI's own header doubles as the
+  // title bar and the traffic lights float over it.
+  assert.strictEqual(chrome.contentInset('darwin').top, 0);
+  assert.strictEqual(chrome.contentInset('linux').top, 0);
+});
+
+// The regression that forced this architecture. Windows draws its caption
+// buttons over the top-right of the web contents, and that rectangle eats
+// clicks. Three separate elements were found there and insetted in turn — the
+// chat header, a docked side panel's header, the empty "Open a tab" header —
+// before the custodian panel ("New agent") settled it: `.cp--right` is
+// `position: fixed; right: 0`, so no ancestor's padding can move it. Neither can
+// an image lightbox, nor any future popover anchored to that corner.
+//
+// So the page must not be insetted at all; it must be smaller. Any padding rule
+// reappearing here means someone has gone back to guessing which element is at
+// the edge today.
+test('nothing is injected into the page to dodge the caption buttons', () => {
+  const css = flat(chrome.dragCss('win32'));
+  assert.strictEqual(css, '', 'Windows must inject no page CSS at all');
+
+  for (const platform of ['darwin', 'win32', 'linux']) {
+    const sheet = flat(chrome.dragCss(platform));
+    assert.ok(!sheet.includes('padding-right'), `${platform} must not inset the right edge`);
+    // `.sidebar-region` was the anchor for every one of the failed handoffs.
+    // macOS still names `.side-panel__header` — as a drag region, which is a
+    // different thing entirely — so the ban is on the layout-state selector.
+    assert.ok(!sheet.includes('sidebar-region'), `${platform} must not key off sidebar layout state`);
+  }
+});
+
+test('the strip clears the caption buttons, measured with a safe fallback', () => {
+  // A constant cannot follow DPI changes, resize or maximise: a 150px guess was
   // wrong by 13px against a real 150%-scaled display, which measured 137px.
-  assert.match(chrome.WIN_CONTROLS_WIDTH, /env\(titlebar-area-width/);
-  assert.match(chrome.WIN_CONTROLS_WIDTH, /env\(titlebar-area-x/);
-  // Both env() reads fall back, so a host without the overlay insets nothing.
   assert.match(chrome.WIN_CONTROLS_WIDTH, /env\(titlebar-area-x, 0px\)/);
   assert.match(chrome.WIN_CONTROLS_WIDTH, /env\(titlebar-area-width, 100vw\)/);
 
-  const css = flat(chrome.dragCss('win32'));
-  assert.ok(!/padding-right:\s*\d+px/.test(css), 'no pixel literal may survive');
-});
-
-// The regression this guards: Windows draws its caption buttons over the
-// top-right of the web contents, and opening a side-docked panel moves that
-// corner from the chat header to the PANEL header — whose close button sits at
-// its right end. Inset the wrong header and the panel opens but cannot close.
-test('the right-edge inset follows whichever header reaches the corner', () => {
-  const css = flat(chrome.dragCss('win32'));
-  const w = chrome.WIN_CONTROLS_WIDTH;
-
-  // No panel: the chat header owns the corner.
-  assert.ok(
-    css.includes(`html.openclaw-native-web-chrome .chat-pane__header { padding-right: ${w}; }`),
-    'chat header must be inset by default',
-  );
-
-  // Side-docked panel open: the panel header owns the corner instead...
-  assert.ok(
-    css.includes(
-      'html.openclaw-native-web-chrome .sidebar-region:not(.sidebar-region--bottom) ' +
-        `.side-panel__header { padding-right: ${w}; }`,
-    ),
-    'side panel header must be inset when the panel is docked beside the chat',
-  );
-
-  // ...and the chat header gives its inset back, or the gap lands mid-window.
-  assert.ok(
-    css.includes(
-      'html.openclaw-native-web-chrome .sidebar-region:not(.sidebar-region--bottom)' +
-        ':has(.side-panel) .chat-pane__header { padding-right: 0; }',
-    ),
-    'chat header must drop its inset once the panel owns the corner',
-  );
-});
-
-// Regression: the first attempt gated the handoff on `.sidebar-region--expanded`,
-// which is the maximise/restore toggle, not "a panel is open". An ordinary
-// docked panel never carries it, so the inset never moved and the panel's close
-// button stayed under the caption buttons.
-test('the panel handoff does not depend on the expand/restore state class', () => {
-  const css = flat(chrome.dragCss('win32'));
-  assert.ok(
-    !css.includes('sidebar-region--expanded'),
-    'handoff must key off panel presence, not layout.expanded',
-  );
-});
-
-test('a bottom-docked panel leaves the inset on the chat header', () => {
-  // `--bottom` turns the region into a column, so the panel sits below the chat
-  // pane and never reaches the caption buttons.
-  const css = flat(chrome.dragCss('win32'));
-  const handoffs = css.match(/\.sidebar-region[^{]*\{/g) || [];
-  assert.ok(handoffs.length > 0, 'expected the panel handoff rules to exist');
-  for (const selector of handoffs) {
-    assert.match(selector, /:not\(\.sidebar-region--bottom\)/);
-  }
+  const css = flat(chrome.stripCss());
+  assert.ok(css.includes(`--strip-height: ${chrome.STRIP_HEIGHT}px`), 'height has one owner');
+  // Those env() vars are published to the window's main frame, and the strip is
+  // a child view where they may be absent — in which case the calc resolves to
+  // 0px and the label would slide under the close button. `max()` is what stops
+  // that being a silent failure.
+  assert.ok(css.includes('max('), 'clearance must have a floor');
+  assert.ok(css.includes(`${chrome.WIN_CONTROLS_FALLBACK}px`));
+  assert.ok(chrome.WIN_CONTROLS_FALLBACK >= 137, 'fallback must clear real buttons');
 });
 
 test('macOS gets no right-edge inset at all', () => {
@@ -120,7 +113,9 @@ test('macOS clears the traffic lights off the sidebar top row', () => {
 test('header controls stay clickable inside the drag regions', () => {
   // -webkit-app-region: drag swallows mouse-down on every descendant until each
   // is carved back out, and a missed control fails silently.
-  for (const platform of ['darwin', 'win32']) {
+  // macOS only: Windows injects nothing, because its title bar is the app's own
+  // strip rather than the UI's header.
+  for (const platform of ['darwin']) {
     const css = flat(chrome.dragCss(platform));
     assert.match(css, /\.chat-pane__header[^}]*-webkit-app-region: drag/);
     assert.match(css, /no-drag/);

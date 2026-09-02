@@ -297,3 +297,45 @@ body:not(.frameless) .scrim { padding-top: 24px; }
    against the body, and the scrim is `position: fixed` so this cannot reach it. */
 body.frameless { padding-top: 62px; }
 body.frameless .center { height: calc(100% - 62px); }
+
+/* --------------------------------------------------------------- title strip */
+
+/* The Windows title bar the app draws for itself, above the page rather than
+   over it. Geometry arrives from src/chrome.js as --strip-* so the height has
+   one owner; the fallbacks here only have to hold for the first paint.
+
+   The whole strip drags. There is nothing to carve back out — it holds no
+   controls, and the caption buttons floating over its right end are the OS's,
+   not the page's, so `app-region` never reaches them. */
+.strip-body {
+  margin: 0;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--bg);
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+.strip {
+  display: flex;
+  align-items: center;
+  height: var(--strip-height, 36px);
+  /* Keep the label clear of the caption buttons. */
+  padding-inline: 12px var(--strip-controls-width, 160px);
+  /* A hairline is the only thing separating strip from page; without it a
+     light theme reads as one flat field and the window looks unfinished. */
+  border-bottom: 1px solid var(--border);
+  box-sizing: border-box;
+}
+
+.strip__label {
+  color: var(--muted);
+  font: 500 12px/1 var(--font-body);
+  letter-spacing: .01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* Text selection inside a drag region is a dead end anyway, and dragging a
+     window by its title should not start a selection. */
+  user-select: none;
+}

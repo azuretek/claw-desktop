@@ -15,15 +15,39 @@
 // `--openclaw-native-titlebar-height` and insets its controls to clear the
 // native window buttons. So the header BECOMES the title bar.
 //
-// That matters, because the obvious approach does not work. Reserving a strip at
-// the top and pushing the page down leaves the page's own `height: 100vh` boxes
-// at full window height — `vh` is always the whole window — so the layout ends
-// up exactly the strip's height below the fold. Measured on a probe page: 754px
-// of content in a 720px window. Clamping it back is possible but it is a
-// heuristic fighting the page. Using the UI's native mode reserves nothing and
-// fights nothing.
+// That works on macOS, where the traffic lights sit top-LEFT over the nav
+// sidebar's brand row — one element, always present, whatever the UI is doing.
+//
+// It does NOT work on Windows, and three failed attempts are the evidence.
+// Windows draws its caption buttons top-RIGHT, above the web contents, and that
+// rectangle eats clicks. Which element sits under it is not a fixed question:
+// the chat pane header, a docked side panel's header, the empty "Open a tab"
+// header — each was found and insetted in turn. Then the custodian panel
+// ("New agent") turned up, and it settled the argument: `.cp--right` is
+// `position: fixed; right: 0; z-index: 60`, so it is not inside any element we
+// could pad. Nor is an image lightbox, nor any future popover anchored to that
+// corner. Padding a selector answers "which element is at the edge *today*".
+//
+// The only inset a fixed-position overlay cannot escape is a smaller viewport.
+// So on Windows the page is loaded into a WebContentsView that starts below the
+// caption band, and the band is a strip the app owns. Nothing in the page can be
+// under the buttons, because the page does not extend under them.
+//
+// This is not the same as the CSS attempt that failed earlier. Reserving space
+// *inside* the page with padding leaves its `height: 100vh` boxes at full window
+// height — `vh` is always the whole window — so the layout lands exactly the
+// strip's height below the fold (measured: 754px of content in a 720px window).
+// Shrinking the *view* shrinks the viewport, so `100vh` is correct again by
+// definition, with nothing to clamp and nothing to fight.
 
+// How tall the UI's own header rows grow on macOS when they become the title bar.
 const TITLEBAR_HEIGHT = 50;
+
+// The strip reserved above the page on Windows. Sized for the caption buttons
+// (32px is the Windows standard) plus a little breathing room, and deliberately
+// not TITLEBAR_HEIGHT: this is space taken *away* from the page, so every pixel
+// is a real cost, where the macOS number is space the UI was drawing anyway.
+const STRIP_HEIGHT = 36;
 
 // There are surfaces the Control UI's stylesheet can never reach: the Windows
 // caption strip (drawn by the OS, above the web contents), the window's own
@@ -43,14 +67,22 @@ const FALLBACK_LIGHT = { mode: 'light', surface: '#faf9f5', symbol: '#3d3a33' };
 // Width to keep clear on the right for the Windows caption buttons, asked of the
 // platform rather than guessed. `titleBarOverlay` turns on the Window Controls
 // Overlay API, which publishes the draggable strip's geometry as CSS env vars;
-// everything to the right of it is buttons. Measured on a 150% display: 137px,
-// where the constant this replaced guessed 150. It also re-resolves on resize
-// and maximise, which a constant cannot.
+// everything to the right of it is buttons. Measured on a 150% display: 137px.
 //
-// Fallbacks make it degrade to zero: with no overlay there are no buttons
-// floating over the page, so nothing needs keeping clear.
+// This is now used only by the title strip the app draws for itself — the page
+// no longer needs it, because the page no longer reaches that corner. The strip
+// does: it spans the full width and its right end lies beneath the buttons.
+//
+// Fallbacks make it resolve to 0px, which is why it is wrapped in `max()` at the
+// point of use: the env vars are published to the window's main frame, and this
+// stylesheet runs in a child view, where they may legitimately be absent.
 const WIN_CONTROLS_WIDTH =
   'calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw))';
+
+// Enough to clear the three buttons at any scale factor when `env()` says
+// nothing. Overshooting costs a little unused strip; undershooting puts the
+// window title under the close button.
+const WIN_CONTROLS_FALLBACK = 160;
 
 // Left edge to keep clear on macOS for the traffic lights. There is no `env()`
 // for these — the position is ours, set below — so it is derived, not guessed:
@@ -84,8 +116,9 @@ function windowOptions(theme = FALLBACK_DARK) {
       titleBarStyle: 'hidden',
       // Windows keeps drawing real minimise/maximise/close buttons, so snap
       // layouts and tooltips still work and the window can never become
-      // unclosable — it just wears the app's colours.
-      titleBarOverlay: { color: theme.surface, symbolColor: theme.symbol, height: TITLEBAR_HEIGHT },
+      // unclosable — it just wears the app's colours. They now land on the
+      // reserved strip rather than on the page.
+      titleBarOverlay: { color: theme.surface, symbolColor: theme.symbol, height: STRIP_HEIGHT },
     };
   }
   // Linux window managers vary too much to reliably hand back a frameless
@@ -95,53 +128,55 @@ function windowOptions(theme = FALLBACK_DARK) {
 
 // `platform` is a parameter rather than a direct `process.platform` read so the
 // generated CSS can be asserted for every platform from one test run.
+//
+// Windows deliberately gets no host class. That mode exists to make the UI's own
+// header behave *as* the title bar, which is exactly what we no longer want
+// there: the app draws a real title strip above the page, so the page should
+// lay itself out as an ordinary page. Setting it anyway would grow the UI's
+// headers to titlebar height and inset them for window buttons that are no
+// longer over the page — reserving the same space twice.
 function hostClass(platform = process.platform) {
   if (platform === 'darwin') return 'openclaw-native-macos';
-  if (platform === 'win32') return 'openclaw-native-web-chrome';
   return null;
 }
 
+/** True where the app owns the window chrome, by either mechanism. */
 function enabled(platform = process.platform) {
-  return hostClass(platform) !== null;
+  return platform === 'darwin' || platform === 'win32';
+}
+
+/**
+ * How much of the window the page does NOT get, because the app draws chrome
+ * there. Non-zero only on Windows; macOS hands the page the whole window and
+ * lets the UI's own header double as the title bar.
+ */
+function contentInset(platform = process.platform) {
+  return { top: platform === 'win32' ? STRIP_HEIGHT : 0 };
+}
+
+/**
+ * Geometry for the app's own title strip, as custom properties.
+ *
+ * Inserted into `ui/titlebar.html` — which is ours, not the gateway's — so the
+ * strip's height and its clearance for the caption buttons have exactly one
+ * owner: the constants above. The stylesheet declares its own fallbacks, so the
+ * strip is never unstyled if this never arrives.
+ */
+function stripCss() {
+  return `:root {
+  --strip-height: ${STRIP_HEIGHT}px;
+  --strip-controls-width: max(${WIN_CONTROLS_FALLBACK}px, ${WIN_CONTROLS_WIDTH});
+}`;
 }
 
 // The UI reserves the space; we only add what it has no way to know about —
 // which regions drag the window. It sets no `-webkit-app-region` anywhere.
 function dragCss(platform = process.platform) {
-  const scope = `html.${hostClass(platform)}`;
-  // The Control UI's own native-host mode only insets the LEFT edge
-  // (`--shell-titlebar-inset`, applied as padding-left) because upstream's
-  // native hosts put their window controls there. Windows puts them on the
-  // right, over the page, so the right edge is ours to handle.
-  //
-  // Which element reaches that edge is not fixed: `.sidebar-region` lays out
-  // `.sidebar-region__primary` (the chat pane) and then
-  // `.sidebar-region__right-runtime` holding `.side-panel`, so opening a
-  // side-docked panel hands the top-right corner to the PANEL's header — and
-  // its close/dock/expand buttons live at that header's right end, directly
-  // under the OS buttons, which are drawn above the web contents and eat the
-  // click. That is a panel you can open and then cannot close.
-  //
-  // Detect that structurally with `:has()`, NOT with a state class. The obvious
-  // candidate, `.sidebar-region--expanded`, is wrong: `expanded` is the
-  // maximise/restore toggle (`layout.expanded` in the bundle), so an ordinary
-  // docked panel never carries it. Presence of `.side-panel` is the real
-  // condition, and it also covers the empty "Open a tab" state, which renders
-  // `.side-panel__header--empty` — same class, same corner, same dead buttons.
-  //
-  // Bottom-docked panels (`--bottom` switches the region to a column) sit below
-  // the chat pane and never reach the corner, so the chat header keeps the inset.
-  const sideDocked = `${scope} .sidebar-region:not(.sidebar-region--bottom)`;
-  const rightInset = platform === 'win32'
-    ? `
-    ${scope} .chat-pane__header { padding-right: ${WIN_CONTROLS_WIDTH}; }
-    ${sideDocked}:has(.side-panel) .chat-pane__header {
-      padding-right: 0;
-    }
-    ${sideDocked} .side-panel__header {
-      padding-right: ${WIN_CONTROLS_WIDTH};
-    }`
-    : '';
+  const cls = hostClass(platform);
+  // Platforms where the page is an ordinary page — Windows (the app draws a real
+  // strip above it) and Linux (the OS frame is left on) — need nothing injected.
+  if (!cls) return '';
+  const scope = `html.${cls}`;
 
   // The traffic lights float over the sidebar's top row, so shift that row's
   // content clear of them. Horizontal, not vertical: pushing the row down far
@@ -175,7 +210,6 @@ function dragCss(platform = process.platform) {
       -webkit-app-region: no-drag; app-region: no-drag;
     }
     ${leftInset}
-    ${rightInset}
   `;
 }
 
@@ -191,8 +225,9 @@ const markScript = (cls) => `(() => {
  * awkward to drag, never stuck.
  */
 function applyToPage(wc) {
-  if (!enabled() || !wc || wc.isDestroyed()) return;
-  wc.executeJavaScript(markScript(hostClass()), true).catch(() => {});
+  const cls = hostClass();
+  if (!cls || !wc || wc.isDestroyed()) return;
+  wc.executeJavaScript(markScript(cls), true).catch(() => {});
   wc.insertCSS(dragCss()).catch(() => {});
 }
 
@@ -444,7 +479,7 @@ function applyTheme(theme, windows = []) {
       win.setTitleBarOverlay({
         color: theme.surface,
         symbolColor: theme.symbol,
-        height: TITLEBAR_HEIGHT,
+        height: STRIP_HEIGHT,
       });
     } catch { /* window has no overlay; its frame is already the right colour */ }
   }
@@ -452,7 +487,11 @@ function applyTheme(theme, windows = []) {
 
 module.exports = {
   TITLEBAR_HEIGHT,
+  STRIP_HEIGHT,
   WIN_CONTROLS_WIDTH,
+  WIN_CONTROLS_FALLBACK,
+  contentInset,
+  stripCss,
   MAC_LIGHTS_X,
   MAC_CONTENT_INSET,
   windowOptions,
