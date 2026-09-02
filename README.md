@@ -274,6 +274,21 @@ built installer silently with `/S`.
 
 ## Builds and releases
 
+Every build — local or CI — is named for what it actually is. `scripts/build.js`
+works that out and hands it to electron-builder, so the filename, the version in
+Settings, and what an updater sees are always the same string:
+
+| Tree state | Version |
+|---|---|
+| On a `v1.0.1` tag, clean | `1.0.1` |
+| Any other commit, clean | `1.0.1-dev.a1b2c3d4e5` |
+| Uncommitted changes | `1.0.1-dev.a1b2c3d4e5.dirty` |
+
+The `.dirty` marker exists for the same reason `build-info.json` records it: a
+commit hash on a build made from a modified tree names something that was never
+committed. A tag on a modified tree is demoted to a dev version too — building
+"1.0.1" from a dirty checkout would produce something that is not 1.0.1.
+
 CI builds on three triggers, and they mean different things:
 
 | Trigger | Produces | Where it goes |
@@ -281,6 +296,10 @@ CI builds on three triggers, and they mean different things:
 | **Push to `main`** | Dev build, `1.0.0-dev.<sha>` | Actions artifacts, 7 days |
 | **Tag `v*`** | Release, `1.0.0` | Published to [Releases](https://github.com/azuretek/claw-desktop/releases), permanent |
 | **Manual dispatch** | Dev build of any ref | Actions artifacts, 7 days |
+
+CI passes its decision down as `CLAW_BUILD_VERSION`, which `scripts/build.js`
+honours over anything git says — so the workflow's `version` job stays the
+authority there without CI needing a separate mechanism from the one you use.
 
 Docs-only pushes are skipped (`paths-ignore`), and pushing several commits in a
 row cancels the superseded runs — except tag builds, which are never cancelled.
@@ -319,6 +338,7 @@ src/ui/              settings and connection-error pages
 scripts/build-info.js    stamps the commit in at pack time (beforePack hook)
 scripts/version.js       CI build versioning + tag/package.json agreement
 scripts/build-version.js decides the version a CI build carries
+scripts/build.js         runs a build under the version the tree deserves
 scripts/make-icons.mjs   regenerates the icon PNGs from the SVG artwork
 ```
 

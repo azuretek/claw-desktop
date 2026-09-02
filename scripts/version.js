@@ -62,16 +62,22 @@ function versionFromTag(ref) {
  * It sorts *below* the release it is named for, which is the useful direction:
  * a dev build is a thing heading towards that version, not past it, so a machine
  * left on one is behind the release rather than stranded above it.
+ *
+ * `dirty` is carried into the name for the same reason build-info.js records it:
+ * a commit hash on a build made from a modified tree describes something that
+ * was never committed, so the name has to say so or it is a lie. Local builds
+ * are where this actually happens.
  */
-function devVersion(base, commit) {
+function devVersion(base, commit, { dirty = false } = {}) {
   const v = parse(base);
   if (!v) throw new Error(`not a releasable version: ${base}`);
   const sha = String(commit || '').trim().toLowerCase();
-  if (!/^[0-9a-f]{7,40}$/.test(sha)) return base;
+  if (!/^[0-9a-f]{7,40}$/.test(sha)) return dirty ? format({ ...v, prerelease: 'dev.dirty' }) : base;
   // Dots rather than a bare concatenation so semver reads `dev` and the sha as
   // separate identifiers; a sha that is all digits would otherwise be compared
   // numerically against `dev`.
-  return format({ ...v, prerelease: `dev.${sha.slice(0, 10)}` });
+  const tag = `dev.${sha.slice(0, 10)}${dirty ? '.dirty' : ''}`;
+  return format({ ...v, prerelease: tag });
 }
 
 /**

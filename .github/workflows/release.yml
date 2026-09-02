@@ -82,13 +82,14 @@ jobs:
       - name: Test
         run: npm test
 
-      # `extraMetadata.version` overrides the version electron-builder reads
-      # from package.json, and package.json is what `artifactName` interpolates.
-      # On a tag build it is identical to package.json — the version job proved
-      # that — so this is a no-op there, and one mechanism covers both cases.
+      # scripts/build.js owns "what version is this build" for local builds and
+      # CI alike. CLAW_BUILD_VERSION is the override it honours, so the version
+      # job stays the authority here without CI needing its own flag — and a
+      # developer running `npm run build:mac` gets the same naming scheme.
       - name: Build
-        run: npm run ${{ matrix.script }} -- --config.extraMetadata.version=${{ needs.version.outputs.version }}
+        run: npm run ${{ matrix.script }}
         env:
+          CLAW_BUILD_VERSION: ${{ needs.version.outputs.version }}
           # Unsigned by design until a Developer ID is configured; stop
           # electron-builder picking up a stray identity on a shared runner.
           CSC_IDENTITY_AUTO_DISCOVERY: false

@@ -16,6 +16,7 @@ const assert = require('node:assert');
 
 const version = require('../scripts/version');
 const buildVersion = require('../scripts/build-version');
+const build = require('../scripts/build');
 
 const SHA = '758853d6569b8acc491a7dc6ab5db4eb3b0639d0';
 
@@ -119,6 +120,33 @@ test('an unusable commit falls back to the plain version rather than inventing o
 
 test('an uppercase sha is folded, so one commit is one version', () => {
   assert.equal(version.devVersion('1.0.0', SHA.toUpperCase()), version.devVersion('1.0.0', SHA));
+});
+
+test('a modified tree says so in the version', () => {
+  // Same reason build-info.js records `dirty`: a commit hash on a build made
+  // from a modified tree names something that was never committed.
+  assert.equal(version.devVersion('1.0.0', SHA, { dirty: true }), '1.0.0-dev.758853d656.dirty');
+  assert.equal(version.parse('1.0.0-dev.758853d656.dirty').prerelease, 'dev.758853d656.dirty');
+});
+
+test('a modified tree with no usable commit still admits it is dirty', () => {
+  assert.equal(version.devVersion('1.0.0', '', { dirty: true }), '1.0.0-dev.dirty');
+});
+
+/* ------------------------------------------------- local build versioning */
+
+test('an explicit override wins over anything git says', () => {
+  // This is how CI hands down the version its own job decided.
+  const r = build.resolveVersion('1.0.0', { CLAW_BUILD_VERSION: '9.9.9-dev.abc' });
+  assert.equal(r.version, '9.9.9-dev.abc');
+  assert.match(r.note, /CLAW_BUILD_VERSION/);
+});
+
+test('resolveVersion always returns something buildable', () => {
+  // Whatever this repo's working state is right now, a build must be nameable.
+  const r = build.resolveVersion('1.0.0', {});
+  assert.ok(version.parse(r.version), `not a version: ${r.version}`);
+  assert.ok(r.note && r.note.length > 3);
 });
 
 /* ------------------------------------------------------------------ checkTag */
