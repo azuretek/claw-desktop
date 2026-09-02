@@ -299,7 +299,7 @@ pinned certificate fingerprints. **No secrets** — those live encrypted in
 
 ```sh
 npm install
-npm test                 # profile-migration unit tests, no Electron needed
+npm test                 # unit tests, no Electron needed
 npm start                # run from source
 npm run pack             # unpacked build into dist/, no installer
 npm run build:mac        # dmg + zip (arm64, x64)
@@ -338,9 +338,56 @@ Windows on Windows. Two ways:
   `Permission denied (publickey)` even when `ssh -T git@github.com` succeeds.
 
 - **`release` GitHub Actions workflow** — builds each platform on its own
-  runner. Push a `v*` tag to cut a release, or run it manually for
-  artifacts. Note that private-repo minutes bill at 2× for Windows and 10× for
+  runner. Note that private-repo minutes bill at 2× for Windows and 10× for
   macOS, so prefer a local build for routine work.
+
+## Releasing
+
+```sh
+npm run release                 # patch: 1.0.0 -> 1.0.1
+npm run release -- minor        # 1.0.0 -> 1.1.0
+npm run release -- major        # 1.0.0 -> 2.0.0
+npm run release -- patch --dry-run
+```
+
+That bumps `package.json`, commits, tags `vX.Y.Z`, and pushes. CI then builds
+both platforms and publishes a GitHub Release with the installers attached.
+
+It refuses, with nothing written, if you are not on `main`, the tree is dirty,
+`HEAD` disagrees with `origin/main`, the tag already exists, or the tests fail.
+Every one of those is a state where the release would name a commit that CI is
+not going to build.
+
+**Do not bump the version by hand.** `artifactName` in `electron-builder.yml`
+interpolates `${version}` from `package.json`, so a tag that disagrees with it
+publishes a release called `v1.1.0` containing files named
+`ClawDesktop-Setup-1.0.0-x64.exe`. The `version` job catches exactly that,
+before either platform build starts:
+
+```
+version check failed: tag says 1.1.0 but package.json says 1.0.0 —
+the installers would be named for the wrong version.
+```
+
+### Dev builds
+
+Running the workflow manually (`workflow_dispatch`) produces a **dev build**,
+versioned for its commit rather than for `package.json`:
+
+```
+ClawDesktop-Setup-1.0.0-dev.758853d656-x64.exe
+```
+
+Before this, every manual build was named for whatever `package.json` last said,
+so three different installers arrived called `ClawDesktop-Setup-1.0.0-x64.exe`
+and only an Actions run id told them apart. The version is applied with
+`--config.extraMetadata.version`, which overrides what electron-builder packages
+without touching the tracked `package.json`, so the app reports the same string
+in Settings that its filename carries.
+
+A dev version sorts *below* the release it is named for — semver puts a
+prerelease under its normal version — so a machine left on one is behind the
+next release rather than stranded above it.
 
 ## Known limits
 

@@ -3,13 +3,33 @@ name: Claw Desktop release
 # Builds each platform on its own runner. Cross-building the Windows installer
 # from macOS needs Wine for resource editing, so a native Windows runner is the
 # supported path rather than a local convenience.
+#
+# Two kinds of build, named differently on purpose:
+#   tag `v*`           a release. The tag must equal package.json — checked
+#                      before anything is built — and the installers are
+#                      published to a GitHub Release.
+#   workflow_dispatch  a dev build, versioned `X.Y.Z-dev.<sha>` so its filename
+#                      says which commit it is. Artifacts only, never published.
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
 
 jobs:
+  # Runs once, on the cheapest runner, before either platform build starts. A
+  # tag that disagrees with package.json is then caught in seconds rather than
+  # after two three-minute builds have produced misnamed installers.
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.decide.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: decide
+        run: node scripts/build-version.js
+
   build:
+    needs: version
     strategy:
       fail-fast: false
       matrix:
@@ -35,15 +55,19 @@ jobs:
       - name: Test
         run: npm test
 
+      # `extraMetadata.version` overrides the version electron-builder reads
+      # from package.json, and package.json is what `artifactName` interpolates.
+      # On a tag build it is identical to package.json — the version job proved
+      # that — so this is a no-op there, and one mechanism covers both cases.
       - name: Build
-        run: npm run ${{ matrix.script }}
+        run: npm run ${{ matrix.script }} -- --config.extraMetadata.version=${{ needs.version.outputs.version }}
         env:
           # Unsigned by design; stop electron-builder looking for an identity.
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
       - uses: actions/upload-artifact@v4
         with:
-          name: claw-desktop-${{ matrix.artifact }}
+          name: claw-desktop-${{ matrix.artifact }}-${{ needs.version.outputs.version }}
           retention-days: 30
           path: |
             dist/*.dmg
@@ -51,8 +75,9 @@ jobs:
             dist/*.exe
 
   release:
-    needs: build
-    # Must track the tag filter above; workflow_dispatch runs build only.
+    needs: [version, build]
+    # Must track the tag filter above; workflow_dispatch builds are dev builds
+    # and are never published.
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -66,3 +91,6 @@ jobs:
         with:
           files: artifacts/**/*
           generate_release_notes: true
+          # A release that publishes with no installers attached looks finished
+          # and is useless; fail loudly instead.
+          fail_on_unmatched_files: true
