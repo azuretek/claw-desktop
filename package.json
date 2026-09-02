@@ -9,6 +9,7 @@
   "private": true,
   "scripts": {
     "test": "node --test test/*.test.js",
+    "prestart": "node scripts/build-info.js --clear",
     "start": "electron .",
     "icons": "node scripts/make-icons.mjs",
     "pack": "electron-builder --dir --publish never",

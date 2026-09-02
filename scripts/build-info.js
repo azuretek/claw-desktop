@@ -84,7 +84,15 @@ module.exports.collect = collect;
 module.exports.write = write;
 module.exports.OUT = OUT;
 
+// `--clear` runs as `prestart`. A local `npm run pack` leaves a stamp on disk,
+// and without this the next `npm start` would report that commit as though it
+// had been packaged — quietly stale the moment anything else is committed.
+// Removing it restores the documented behaviour: a source run claims no commit.
 if (require.main === module) {
+  if (process.argv.includes('--clear')) {
+    fs.rmSync(OUT, { force: true });
+    process.exit(0);
+  }
   const info = write();
   console.log(`${OUT}\n${JSON.stringify(info, null, 2)}`);
 }
