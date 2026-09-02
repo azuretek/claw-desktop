@@ -9,7 +9,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 const isLocalPage = location.protocol === 'file:';
 
 if (isLocalPage) {
-  contextBridge.exposeInMainWorld('openclaw', {
+  contextBridge.exposeInMainWorld('clawDesktop', {
     getState: () => ipcRenderer.invoke('app:state'),
     testGateway: (url) => ipcRenderer.invoke('app:test-gateway', url),
     addGateway: (entry) => ipcRenderer.invoke('app:add-gateway', entry),

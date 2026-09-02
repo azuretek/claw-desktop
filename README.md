@@ -1,4 +1,4 @@
-# OpenClaw Desktop
+# Claw Desktop
 
 A standalone desktop window for the OpenClaw Control UI — its own icon, its own
 Dock/taskbar entry, a tray icon and a global shortcut. Electron, one codebase,
@@ -26,13 +26,29 @@ and has no access to the host beyond the window it draws.
 Grab the installer for your platform from the repo's
 [Releases](https://github.com/azuretek/home_server/releases) page.
 
-- **Windows** — run `OpenClaw-Setup-<version>-<arch>.exe`. Per-user, no admin.
+- **Windows** — run `ClawDesktop-Setup-<version>-<arch>.exe`. Per-user, no admin.
 - **macOS** — open the `.dmg` and drag to Applications. The build is **unsigned**,
   so Gatekeeper will refuse it on first launch. Clear the quarantine flag once:
 
   ```sh
-  xattr -dr com.apple.quarantine /Applications/OpenClaw.app
+  xattr -dr com.apple.quarantine "/Applications/Claw Desktop.app"
   ```
+
+### Upgrading from the "OpenClaw"-named build
+
+This app was called *OpenClaw* until it was renamed to **Claw Desktop**. Two
+consequences:
+
+- **The profile moves with you.** `productName` is what Electron derives the
+  profile directory from, so a rename repoints it at an empty one. On first
+  launch the app moves the old directory across (`OpenClaw` → `Claw Desktop`),
+  keeping the gateway list, the encrypted credentials, and — the one that bites
+  — the paired device identity, so the Gateway does not see an unrecognised
+  client and report a login from a new device. **Quit the old app first.** The
+  move is skipped if a `Claw Desktop` profile already exists.
+- **The old install is a separate app.** The Windows `appId` changed, so the
+  installer will not replace an existing *OpenClaw* entry. Uninstall that one,
+  and on macOS delete `/Applications/OpenClaw.app`.
 
 ## First run
 
@@ -148,9 +164,9 @@ Config lives at:
 
 | Platform | Path |
 |---|---|
-| macOS | `~/Library/Application Support/OpenClaw/config.json` |
-| Windows | `%APPDATA%\OpenClaw\config.json` |
-| Linux | `~/.config/OpenClaw/config.json` |
+| macOS | `~/Library/Application Support/Claw Desktop/config.json` |
+| Windows | `%APPDATA%\Claw Desktop\config.json` |
+| Linux | `~/.config/Claw Desktop/config.json` |
 
 It is written atomically and holds gateway list, window bounds, preferences, and
 pinned certificate fingerprints. **No secrets** — those live encrypted in
@@ -160,6 +176,7 @@ pinned certificate fingerprints. **No secrets** — those live encrypted in
 
 ```sh
 npm install
+npm test                 # profile-migration unit tests, no Electron needed
 npm start                # run from source
 npm run pack             # unpacked build into dist/, no installer
 npm run build:mac        # dmg + zip (arm64, x64)
@@ -177,13 +194,13 @@ Windows on Windows. Two ways:
 
   ```
   gh repo clone azuretek/home_server
-  cd home_server\desktop\openclaw-desktop
+  cd home_server\desktop\claw-desktop
   npm ci
   npm run build:win
-  dist\OpenClaw-Setup-1.0.0-x64.exe /S     :: /S installs silently, per-user
+  dist\ClawDesktop-Setup-1.0.0-x64.exe /S     :: /S installs silently, per-user
   ```
 
-  It installs to `%LOCALAPPDATA%\Programs\OpenClaw`. A full `build:win` takes
+  It installs to `%LOCALAPPDATA%\Programs\Claw Desktop`. A full `build:win` takes
   roughly half an hour on the Blade. **Passing `--x64` does not shorten it** —
   the per-target `arch` list in `electron-builder.yml` wins over the CLI flag,
   so you still get x64, arm64, and the combined installer. Edit the config if
@@ -211,6 +228,7 @@ Windows on Windows. Two ways:
 ```
 src/main.js          app lifecycle, window, tray, menus, navigation guards
 src/certs.js         trust-on-first-use certificate pinning
+src/profile.js       one-time profile move for the OpenClaw -> Claw Desktop rename
 src/chrome.js        frameless window chrome + Control UI native-host mode
 src/config.js        atomic JSON config store (no secrets)
 src/secrets.js       per-gateway token/password/headers, safeStorage-encrypted

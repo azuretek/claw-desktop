@@ -1,13 +1,14 @@
 {
-  "name": "openclaw-desktop",
-  "productName": "OpenClaw",
+  "name": "claw-desktop",
+  "productName": "Claw Desktop",
   "version": "1.0.0",
-  "description": "Desktop shell for the OpenClaw Control UI",
+  "description": "Claw Desktop - a desktop shell for the OpenClaw Control UI",
   "main": "src/main.js",
   "author": "Abi Renhart",
   "license": "UNLICENSED",
   "private": true,
   "scripts": {
+    "test": "node --test test/*.test.js",
     "start": "electron .",
     "icons": "node scripts/make-icons.mjs",
     "pack": "electron-builder --dir",

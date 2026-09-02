@@ -1,6 +1,6 @@
 'use strict';
 
-const api = window.openclaw;
+const api = window.clawDesktop;
 const firstRun = new URLSearchParams(location.search).has('firstRun');
 const $ = (id) => document.getElementById(id);
 
@@ -252,7 +252,7 @@ function renderPrefs() {
   $('startHidden').checked = s.startHidden;
   $('globalShortcut').value = s.globalShortcut || '';
   $('about').textContent =
-    `OpenClaw ${state.versions.app} · Electron ${state.versions.electron} · Chromium ${state.versions.chrome} · ${state.configPath}`;
+    `Claw Desktop ${state.versions.app} · Electron ${state.versions.electron} · Chromium ${state.versions.chrome} · ${state.configPath}`;
 }
 
 function render() {

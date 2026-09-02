@@ -9,12 +9,24 @@ const https = require('node:https');
 const config = require('./config');
 const certs = require('./certs');
 const chrome = require('./chrome');
+const profile = require('./profile');
 const secrets = require('./secrets');
 const defaults = require('./defaults');
 
 const UI_DIR = path.join(__dirname, 'ui');
 const ASSETS = path.join(__dirname, 'assets');
 const PRELOAD = path.join(__dirname, 'preload.js');
+
+/* ------------------------------------------------------- profile after rename */
+
+// Runs at load, before app.whenReady() and before anything opens the profile —
+// `appData` is one of the few paths resolvable that early. The logic itself
+// lives in src/profile.js so it can be tested without launching Electron.
+{
+  const migration = profile.migrate(app.getPath('appData'));
+  if (migration.status === 'migrated') console.log(`[claw] migrated profile: ${migration.from} -> ${migration.to}`);
+  if (migration.status === 'failed') console.warn(`[claw] could not migrate profile (${migration.error}); starting fresh`);
+}
 
 let mainWindow = null;
 let settingsWindow = null;
@@ -200,7 +212,7 @@ function loadActiveGateway() {
   const creds = secrets.load(gw.id);
   const supplied = [creds.token && 'token', creds.password && 'password', creds.headers.length && `${creds.headers.length} header(s)`]
     .filter(Boolean).join(', ');
-  console.log(`[openclaw] connecting to ${gw.label || gw.url} <${gw.url}>${supplied ? ` (supplying ${supplied})` : ''}`);
+  console.log(`[claw] connecting to ${gw.label || gw.url} <${gw.url}>${supplied ? ` (supplying ${supplied})` : ''}`);
   mainWindow.loadURL(withTokenHandoff(gw.url, creds.token));
 }
 
@@ -219,7 +231,7 @@ let autofilled = false;
 
 function autofillScript(creds) {
   return `(() => {
-    if (window.__openclawAutofilled) return 'already';
+    if (window.__clawDesktopAutofilled) return 'already';
     const creds = ${JSON.stringify({ token: creds.token, password: creds.password })};
     if (!creds.token && !creds.password) return 'nothing-to-fill';
 
@@ -242,7 +254,7 @@ function autofillScript(creds) {
       if (creds.token && fields[0] && !fields[0].value) { setValue(fields[0], creds.token); filled.push('token'); }
       if (creds.password && fields[1] && !fields[1].value) { setValue(fields[1], creds.password); filled.push('password'); }
       if (!filled.length) return false;
-      window.__openclawAutofilled = true;
+      window.__clawDesktopAutofilled = true;
       const last = filled.includes('password') ? fields[1] : fields[0];
       last.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
       return true;
@@ -266,8 +278,8 @@ function maybeAutofill(wc) {
   if (!creds.token && !creds.password) return;
   autofilled = true;
   wc.executeJavaScript(autofillScript(creds), true)
-    .then((result) => console.log(`[openclaw] login gate autofill: ${result}`))
-    .catch((err) => console.warn(`[openclaw] login gate autofill failed: ${err.message}`));
+    .then((result) => console.log(`[claw] login gate autofill: ${result}`))
+    .catch((err) => console.warn(`[claw] login gate autofill failed: ${err.message}`));
 }
 
 function attachNavigationGuards(wc) {
@@ -333,7 +345,7 @@ function createMainWindow() {
     show: false,
     backgroundColor: '#0a0a0a',
     autoHideMenuBar: true,
-    title: 'OpenClaw',
+    title: 'Claw Desktop',
     icon: process.platform === 'linux' ? path.join(ASSETS, 'icon.png') : undefined,
     webPreferences: {
       preload: PRELOAD,
@@ -419,7 +431,7 @@ function openSettings(opts = {}) {
     height: 660,
     minWidth: 560,
     minHeight: 480,
-    title: opts.firstRun ? 'Connect to a gateway' : 'OpenClaw Settings',
+    title: opts.firstRun ? 'Connect to a gateway' : 'Claw Desktop Settings',
     backgroundColor: '#0a0a0a',
     autoHideMenuBar: true,
     parent: opts.firstRun ? undefined : (mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined),
@@ -458,7 +470,7 @@ function buildMenu() {
         { type: 'separator' },
         { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' },
         { type: 'separator' },
-        { label: 'Quit OpenClaw', accelerator: 'Cmd+Q', click: () => { quitting = true; app.quit(); } },
+        { label: 'Quit Claw Desktop', accelerator: 'Cmd+Q', click: () => { quitting = true; app.quit(); } },
       ],
     }] : []),
     {
@@ -502,13 +514,13 @@ function buildMenu() {
 function buildTray() {
   if (!tray) {
     tray = new Tray(trayImage());
-    tray.setToolTip('OpenClaw');
+    tray.setToolTip('Claw Desktop');
     tray.on('click', () => (process.platform === 'darwin' ? tray.popUpContextMenu() : toggleMainWindow()));
     tray.on('double-click', showMainWindow);
   }
   const cfg = config.get();
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: 'Open OpenClaw', click: showMainWindow },
+    { label: 'Open Claw Desktop', click: showMainWindow },
     { label: 'Reconnect', click: () => { showMainWindow(); loadActiveGateway(); } },
     { type: 'separator' },
     {
@@ -709,7 +721,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', showMainWindow);
 
   app.whenReady().then(() => {
-    if (process.platform === 'win32') app.setAppUserModelId('com.azuretek.openclaw-desktop');
+    if (process.platform === 'win32') app.setAppUserModelId('com.azuretek.claw-desktop');
 
     // The default session only ever serves our own file:// pages; the gateway
     // itself loads in a per-gateway partition configured by createMainWindow.
@@ -717,14 +729,14 @@ if (!app.requestSingleInstanceLock()) {
     configureSession(session.defaultSession, null);
     certs.install(app, () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null));
 
-    if (!secrets.available()) console.warn(`[openclaw] ${secrets.unavailableReason()}`);
+    if (!secrets.available()) console.warn(`[claw] ${secrets.unavailableReason()}`);
     registerIpc();
     buildMenu();
     buildTray();
     applyLaunchAtLogin();
 
     const shortcut = registerShortcut();
-    if (!shortcut.ok) console.warn(`[openclaw] global shortcut not registered: ${shortcut.error}`);
+    if (!shortcut.ok) console.warn(`[claw] global shortcut not registered: ${shortcut.error}`);
 
     if (process.argv.includes('--hidden')) config.update({ startHidden: true });
     createMainWindow();

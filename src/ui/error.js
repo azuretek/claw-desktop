@@ -28,5 +28,5 @@ document.getElementById('code').textContent = [url, code ? `error ${code}` : '',
   .filter(Boolean)
   .join('  ·  ');
 
-document.getElementById('retry').addEventListener('click', () => window.openclaw.retry());
-document.getElementById('settings').addEventListener('click', () => window.openclaw.openSettings());
+document.getElementById('retry').addEventListener('click', () => window.clawDesktop.retry());
+document.getElementById('settings').addEventListener('click', () => window.clawDesktop.openSettings());
