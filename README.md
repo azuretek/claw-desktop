@@ -153,7 +153,11 @@ Windows on Windows. Two ways:
   dist\OpenClaw-Setup-1.0.0-x64.exe /S     :: /S installs silently, per-user
   ```
 
-  It installs to `%LOCALAPPDATA%\Programs\OpenClaw`. Use `gh repo clone` rather
+  It installs to `%LOCALAPPDATA%\Programs\OpenClaw`. A full `build:win` takes
+  roughly half an hour on the Blade. **Passing `--x64` does not shorten it** —
+  the per-target `arch` list in `electron-builder.yml` wins over the CLI flag,
+  so you still get x64, arm64, and the combined installer. Edit the config if
+  you genuinely want one arch. Use `gh repo clone` rather
   than `git clone git@…`: Git for Windows ships its own `ssh` that cannot see keys
   held by the Windows OpenSSH agent, so an SSH clone fails with
   `Permission denied (publickey)` even when `ssh -T git@github.com` succeeds.
