@@ -6,6 +6,11 @@ directories:
   output: dist
   buildResources: build
 
+# Writes src/build-info.json — the commit being packaged — before the app is
+# assembled, so every build carries its own identity and Settings can show it.
+# One hook covers `pack`, all three `build:*` scripts, and CI.
+beforePack: scripts/build-info.js
+
 files:
   - src/**/*
   - package.json

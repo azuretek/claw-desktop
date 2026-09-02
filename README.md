@@ -254,6 +254,35 @@ normal OS title bar, and follows the Control UI's light or dark theme:
 - **Global shortcut** — `CommandOrControl+Shift+O` by default. Shows or hides the
   window from anywhere. Clear it to disable.
 
+### Which build am I running?
+
+The line at the bottom of Settings names the commit the app was packaged from —
+during first-run setup as well as afterwards:
+
+```
+Claw Desktop 1.0.0 (a1b2c3d4e5, built 2026-09-02 08:41Z) · Electron 44.1.1 · …
+```
+
+`package.json`'s version is hand-maintained and rarely moves — every build so far
+is `1.0.0` — so it cannot tell two builds apart. The commit can. Variants:
+
+| Shown | Means |
+|---|---|
+| `1.0.0 (a1b2c3d4e5, built …)` | packaged from that commit on `main` |
+| `1.0.0 (fix-clicks a1b2c3d4e5, built …)` | packaged from a branch — named, because that is the surprising case |
+| `1.0.0 (a1b2c3d4e5-dirty, built …)` | the tree had uncommitted changes, so the hash does **not** describe what shipped |
+| `1.0.0 (source build)` | running via `npm start`, which has no single commit to claim |
+
+`scripts/build-info.js` writes `src/build-info.json` from electron-builder's
+`beforePack` hook, so `pack`, every `build:*` script and CI stamp it the same
+way. The file is generated and git-ignored — a commit cannot contain its own
+hash — and its absence is exactly what makes a source run report itself as one.
+
+That commit doubles as the app-upgrade fingerprint for the cache clear in
+[Stale UI after an upgrade](#stale-ui-after-an-upgrade). A dirty or source build
+falls back to the app bundle's size and mtime, because every build from a dirty
+tree shares one hash.
+
 Config lives at:
 
 | Platform | Path |
@@ -326,6 +355,7 @@ Windows on Windows. Two ways:
 
 ```
 src/main.js          app lifecycle, window, tray, menus, navigation guards
+src/build-info.js    reads the packed-in commit; formats the Settings build line
 src/cache.js         drops the Control UI's cached copy of itself, never its storage
 src/certs.js         trust-on-first-use certificate pinning
 src/profile.js       one-time profile move for the OpenClaw -> Claw Desktop rename
@@ -335,6 +365,7 @@ src/secrets.js       per-gateway token/password/headers, safeStorage-encrypted
 src/defaults.js      suggested gateways and defaults  ← edit for a new machine
 src/preload.js       narrow IPC bridge, exposed to local pages only
 src/ui/              settings and connection-error pages
+scripts/build-info.js  stamps the commit in at pack time (electron-builder beforePack)
 scripts/make-icons.mjs
 ```
 

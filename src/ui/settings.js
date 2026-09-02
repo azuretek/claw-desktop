@@ -259,12 +259,19 @@ function renderPrefs() {
   $('launchAtLogin').checked = s.launchAtLogin;
   $('startHidden').checked = s.startHidden;
   $('globalShortcut').value = s.globalShortcut || '';
+}
+
+// `state.build` already reads as "1.0.0 (a1b2c3d4e5, built …)" — the main
+// process formats it, because this page is sandboxed and cannot require the
+// module that knows the rules.
+function renderAbout() {
   $('about').textContent =
-    `Claw Desktop ${state.versions.app} · Electron ${state.versions.electron} · Chromium ${state.versions.chrome} · ${state.configPath}`;
+    `Claw Desktop ${state.build} · Electron ${state.versions.electron} · Chromium ${state.versions.chrome} · ${state.configPath}`;
 }
 
 function render() {
   renderGateways();
+  renderAbout();
   if (!firstRun) { renderCerts(); renderPrefs(); }
 }
 

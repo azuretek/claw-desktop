@@ -8,6 +8,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const https = require('node:https');
 const config = require('./config');
+const buildInfo = require('./build-info');
 const cache = require('./cache');
 const certs = require('./certs');
 const chrome = require('./chrome');
@@ -18,6 +19,10 @@ const defaults = require('./defaults');
 const UI_DIR = path.join(__dirname, 'ui');
 const ASSETS = path.join(__dirname, 'assets');
 const PRELOAD = path.join(__dirname, 'preload.js');
+
+// Read once: the stamp is baked into the bundle at pack time and cannot change
+// while the app is running.
+const buildStamp = buildInfo.read();
 
 /* ------------------------------------------------------- profile after rename */
 
@@ -375,14 +380,18 @@ async function clearCacheAndReload() {
 /**
  * Identify the installed build.
  *
- * Stats the app bundle — `app.asar` in a packaged app, the project directory in
- * development — because the semver alone does not move between builds. See
+ * Prefers the commit stamped in at pack time, which is what a build actually
+ * is. Failing that — a source run, or a build made from a dirty tree — it stats
+ * the app bundle (`app.asar` when packaged, the project directory in
+ * development), because the semver alone does not move between builds. See
  * cache.buildFingerprint. A stat that fails degrades to the version, which
  * simply means this particular upgrade is not detected; it must never throw and
  * take startup with it.
  */
 function appBuildId() {
   const version = app.getVersion();
+  const commit = buildInfo.buildId(buildStamp);
+  if (commit) return cache.buildFingerprint({ version, commit });
   try {
     const stat = fs.statSync(app.getAppPath());
     return cache.buildFingerprint({ version, size: stat.size, mtimeMs: stat.mtimeMs });
@@ -1048,7 +1057,11 @@ function currentState() {
     },
     trustedCerts: cfg.trustedCerts,
     platform: process.platform,
-    versions: { app: app.getVersion(), electron: process.versions.electron, chrome: process.versions.chrome },
+    // Pre-formatted rather than sent as parts: the settings page is sandboxed
+    // and cannot require src/build-info.js, so formatting it there would mean a
+    // second copy of the rules that would drift.
+    build: buildInfo.describe(app.getVersion(), buildStamp),
+    versions: { electron: process.versions.electron, chrome: process.versions.chrome },
     configPath: config.path(),
   };
 }

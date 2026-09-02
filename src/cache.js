@@ -52,13 +52,22 @@ function parseServiceWorkerVersion(source) {
  * Deliberately not `app.getVersion()` alone. The version in package.json is
  * hand-maintained and in practice does not move — the build that introduced
  * this code and the one before it are both `1.0.0` — so comparing versions
- * would never fire and the app-upgrade clear would be decoration. The app
- * bundle's size and mtime do change on every install.
+ * would never fire and the app-upgrade clear would be decoration.
  *
- * @param {{version: string, size: number, mtimeMs: number}} stat
+ * The commit stamped in at pack time is the real identity of a build, so it is
+ * used when there is one. A source run has no commit, and a dirty tree's hash
+ * is shared by every build made from it — so both fall back to the app
+ * bundle's size and mtime, which do move on every install. See
+ * src/build-info.js `buildId`.
+ *
+ * Switching between the two forms is safe: the strings differ, so the first
+ * launch after an upgrade sees a change, which is exactly what it is.
+ *
+ * @param {{version: string, size: number, mtimeMs: number, commit?: string|null}} stat
  * @returns {string}
  */
-function buildFingerprint({ version, size, mtimeMs }) {
+function buildFingerprint({ version, size, mtimeMs, commit }) {
+  if (commit) return `${version}:${commit}`;
   // mtime is rounded because filesystems disagree about sub-millisecond
   // precision, and a fingerprint that drifts on its own would clear the cache
   // on every single launch.
