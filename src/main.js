@@ -12,6 +12,7 @@ const buildInfo = require('./build-info');
 const cache = require('./cache');
 const certs = require('./certs');
 const chrome = require('./chrome');
+const overlay = require('./overlay');
 const profile = require('./profile');
 const secrets = require('./secrets');
 const defaults = require('./defaults');
@@ -713,6 +714,11 @@ function createMainWindow() {
 
 function showMainWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) return createMainWindow();
+  // The tray icon and the global shortcut are what someone reaches for when the
+  // window has stopped responding, so this is the right place to sweep up a dead
+  // overlay: it makes the instinctive gesture the recovery gesture. Supervision
+  // should have caught it already — this is the net under that.
+  if (settingsView && !settingsAlive()) closeSettings();
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
@@ -768,6 +774,11 @@ function settingsSearch(opts = {}) {
   return `?${params}`;
 }
 
+/** True if this overlay is still a live thing that can be focused and closed. */
+function settingsAlive() {
+  return Boolean(settingsView) && !settingsView.webContents.isDestroyed();
+}
+
 function openSettings(opts = {}) {
   if (!mainWindow || mainWindow.isDestroyed()) return null;
   // On first run the main window is already showing this page full-size; a
@@ -776,6 +787,11 @@ function openSettings(opts = {}) {
     showMainWindow();
     return null;
   }
+  // A destroyed view still covers the window and still eats clicks, so focusing
+  // it does nothing and reopening has to mean *replace*. Otherwise the one
+  // action a wedged user would try — click Settings again — is the one action
+  // guaranteed not to help.
+  if (settingsView && !settingsAlive()) closeSettings();
   if (settingsView) {
     settingsView.webContents.focus();
     return settingsView;
@@ -791,6 +807,16 @@ function openSettings(opts = {}) {
 
   const wc = settingsView.webContents;
   attachContextMenu(wc);
+  // Armed before the view is attached, so a load that fails immediately is
+  // already covered. `isCurrent` is a closure over the module-level handle
+  // rather than a captured boolean: it has to answer for the overlay that is
+  // live *now*, or a dying one closes its own replacement.
+  const view = settingsView;
+  overlay.supervise(wc, {
+    isCurrent: () => settingsView === view,
+    close: () => closeSettings(),
+    log: (msg) => console.error(`[claw] ${msg}`),
+  });
   mainWindow.contentView.addChildView(settingsView);
   layoutViews();
   wc.loadFile(path.join(UI_DIR, 'settings.html'), { search: settingsSearch() });
@@ -809,7 +835,11 @@ function closeSettings() {
   try {
     mainWindow?.contentView.removeChildView(view);
   } catch { /* window already gone; the view goes with it */ }
-  view.webContents.close();
+  // Detaching is the part that unblocks the window, so nothing after it may
+  // throw: this runs on the crash path too, where the contents are already gone.
+  try {
+    if (!view.webContents.isDestroyed()) view.webContents.close();
+  } catch { /* already torn down */ }
   page()?.focus();
 }
 
