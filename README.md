@@ -215,11 +215,16 @@ npm start                # run from source
 npm run pack             # unpacked build into dist/, no installer
 npm run build:mac        # dmg + zip (arm64, x64)
 npm run build:win        # nsis installer (x64, arm64)
-npm run icons            # regenerate PNGs from src/assets/openclaw.svg
+npm run icons            # regenerate PNGs from src/assets/claw*.svg
 ```
 
 Icons are **committed** deliberately, so a clean clone builds without `sharp`.
 Re-run `npm run icons` only when the artwork changes.
+
+The artwork is original and lives in two files: `src/assets/claw.svg` is the
+application icon, and `src/assets/claw-tray.svg` is the same mark stripped of its
+tile and window for the 16px tray. Neither is derived from OpenClaw's mascot or
+any other upstream brand asset.
 
 Building Windows installers on macOS needs Wine for resource editing, so build
 Windows on Windows. Two ways:

@@ -1,0 +1,16 @@
+<!-- Claw Desktop — tray/menu-bar icon.
+
+     The app icon's mark, stripped to what survives 16 physical pixels: no tile,
+     no window, no gradient. Three flat marks on transparent, thicker and spread
+     wider across the canvas than the app icon's, because at this size stroke
+     weight is the only thing that carries.
+
+     Flat red rather than a template image on purpose — see trayImage() in
+     src/main.js for why the mark keeps its colour in the menu bar. -->
+<svg viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <g fill="#ff4d4d">
+    <path d="M63 6 C58 39 39 58 6 63 C21 40 40 21 63 6Z"/>
+    <path d="M114 6 C92 56 56 92 6 114 C38 74 74 38 114 6Z"/>
+    <path d="M114 57 C109 90 90 109 57 114 C72 91 91 72 114 57Z"/>
+  </g>
+</svg>
