@@ -1,6 +1,7 @@
 'use strict';
 
-const { nativeTheme } = require('electron');
+// `electron` is required lazily, inside the one function that needs it, so the
+// CSS this module generates can be unit-tested under plain `node --test`.
 
 // Frameless window chrome, the way Discord, Slack and Spotify do it: no OS title
 // bar, the app's colour running to the top edge, window controls floating over
@@ -25,8 +26,18 @@ const { nativeTheme } = require('electron');
 const TITLEBAR_HEIGHT = 50;
 const SURFACE = '#0a0a0a';
 const SYMBOL = '#c9c9c9';
-// Width to keep clear on the right for the Windows overlay buttons.
-const WIN_CONTROLS_WIDTH = 150;
+
+// Width to keep clear on the right for the Windows caption buttons, asked of the
+// platform rather than guessed. `titleBarOverlay` turns on the Window Controls
+// Overlay API, which publishes the draggable strip's geometry as CSS env vars;
+// everything to the right of it is buttons. Measured on a 150% display: 137px,
+// where the constant this replaced guessed 150. It also re-resolves on resize
+// and maximise, which a constant cannot.
+//
+// Fallbacks make it degrade to zero: with no overlay there are no buttons
+// floating over the page, so nothing needs keeping clear.
+const WIN_CONTROLS_WIDTH =
+  'calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw))';
 
 /** BrowserWindow options for the main window. */
 function windowOptions() {
@@ -51,22 +62,45 @@ function windowOptions() {
   return {};
 }
 
-function hostClass() {
-  if (process.platform === 'darwin') return 'openclaw-native-macos';
-  if (process.platform === 'win32') return 'openclaw-native-web-chrome';
+// `platform` is a parameter rather than a direct `process.platform` read so the
+// generated CSS can be asserted for every platform from one test run.
+function hostClass(platform = process.platform) {
+  if (platform === 'darwin') return 'openclaw-native-macos';
+  if (platform === 'win32') return 'openclaw-native-web-chrome';
   return null;
 }
 
-function enabled() {
-  return hostClass() !== null;
+function enabled(platform = process.platform) {
+  return hostClass(platform) !== null;
 }
 
 // The UI reserves the space; we only add what it has no way to know about —
 // which regions drag the window. It sets no `-webkit-app-region` anywhere.
-function dragCss() {
-  const scope = `html.${hostClass()}`;
-  const rightInset = process.platform === 'win32'
-    ? `${scope} .chat-pane__header { padding-right: ${WIN_CONTROLS_WIDTH}px; }`
+function dragCss(platform = process.platform) {
+  const scope = `html.${hostClass(platform)}`;
+  // The Control UI's own native-host mode only insets the LEFT edge
+  // (`--shell-titlebar-inset`, applied as padding-left) because upstream's
+  // native hosts put their window controls there. Windows puts them on the
+  // right, over the page, so the right edge is ours to handle.
+  //
+  // Which element reaches that edge is not fixed: `.sidebar-region` lays out
+  // `.sidebar-region__primary` (the chat pane) and then `.side-panel`, so
+  // opening a side-docked panel hands the top-right corner to the PANEL's
+  // header — and its close button lives at that header's right end, directly
+  // under the OS buttons, which are drawn above the web contents and eat the
+  // click. That is a panel you can open and then cannot close.
+  //
+  // Bottom-docked panels (`--bottom` switches the region to a column) sit below
+  // the chat pane and never reach the corner, so the chat header keeps the inset.
+  const rightInset = platform === 'win32'
+    ? `
+    ${scope} .chat-pane__header { padding-right: ${WIN_CONTROLS_WIDTH}; }
+    ${scope} .sidebar-region--expanded:not(.sidebar-region--bottom) .chat-pane__header {
+      padding-right: 0;
+    }
+    ${scope} .sidebar-region--expanded:not(.sidebar-region--bottom) .side-panel__header {
+      padding-right: ${WIN_CONTROLS_WIDTH};
+    }`
     : '';
   return `
     ${scope} { --openclaw-native-titlebar-height: ${TITLEBAR_HEIGHT}px; }
@@ -104,7 +138,16 @@ function applyToPage(wc) {
 
 /** Ask the OS to draw our remaining native surfaces (the settings window) dark. */
 function applyTheme() {
-  nativeTheme.themeSource = 'dark';
+  require('electron').nativeTheme.themeSource = 'dark';
 }
 
-module.exports = { TITLEBAR_HEIGHT, windowOptions, applyToPage, applyTheme, enabled, hostClass };
+module.exports = {
+  TITLEBAR_HEIGHT,
+  WIN_CONTROLS_WIDTH,
+  windowOptions,
+  dragCss,
+  applyToPage,
+  applyTheme,
+  enabled,
+  hostClass,
+};
