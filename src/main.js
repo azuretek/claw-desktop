@@ -7,6 +7,7 @@ const {
 const path = require('node:path');
 const https = require('node:https');
 const config = require('./config');
+const cache = require('./cache');
 const certs = require('./certs');
 const chrome = require('./chrome');
 const profile = require('./profile');
@@ -285,6 +286,108 @@ function loadActiveGateway() {
   page()?.loadURL(withTokenHandoff(gw.url, creds.token));
 }
 
+/* --------------------------------------------------------------- stale cache */
+
+// The Control UI is a PWA whose service worker serves /assets/ cache-first. A
+// browser re-checks sw.js on navigation, which is normally often enough — but
+// this app closes to tray rather than quitting, so its document can sit there
+// for weeks without one, still controlled by the worker an old gateway
+// installed. What that looks like is an app that keeps showing yesterday's
+// Control UI after the gateway has been upgraded under it.
+//
+// Three ways out, in order of how little the user has to notice:
+//   - the gateway's build id changed since the last load   -> clearAndReload
+//   - this app was upgraded since the last run             -> clearOnAppUpgrade
+//   - neither, but it still looks wrong                    -> the menu/tray item
+//
+// All three route through cache.clear(), which drops caches and *only* caches;
+// see src/cache.js for why that boundary is load-bearing.
+
+function gatewayOrigins() {
+  return config.get().gateways.map((g) => originOf(g.url)).filter(Boolean);
+}
+
+function forgetBuildIds(origins) {
+  const next = { ...config.get().swVersions };
+  for (const origin of origins) delete next[origin];
+  config.update({ swVersions: next });
+}
+
+// Set while a reload we triggered ourselves is in flight, so the probe on that
+// load is skipped. Not a loop guard — the new build id is recorded *before* the
+// reload, so a second pass would decide `unchanged` anyway — just a way to
+// avoid re-probing a page we already know the answer for.
+let selfReloading = false;
+
+/**
+ * Read the gateway's Control UI build id and, if it moved, drop the caches and
+ * reload. Called after every successful load of a gateway page.
+ */
+async function maybeRefreshForNewBuild(wc) {
+  if (selfReloading) { selfReloading = false; return; }
+  const origin = activeOrigin();
+  if (!origin || !wc.getURL().startsWith(origin)) return;
+
+  let source = null;
+  try {
+    source = await wc.executeJavaScript(cache.SW_SOURCE_PROBE, true);
+  } catch {
+    // A page that refuses the probe (navigated away mid-flight, no service
+    // worker, not a Control UI at all) is not an error worth surfacing: the
+    // manual command still covers it.
+    return;
+  }
+
+  const version = cache.parseServiceWorkerVersion(source);
+  const seen = config.get().swVersions[origin] || null;
+  const decision = cache.decideRefresh(seen, version);
+  if (decision.action === 'none') return;
+
+  // Record first, unconditionally. If clearing or reloading then fails, the
+  // worst case is that this upgrade is not auto-cleared; recording afterwards
+  // would instead retry the clear on every single load.
+  config.update({ swVersions: { ...config.get().swVersions, [origin]: version } });
+  if (decision.action === 'record') return;
+
+  console.log(`[claw] control ui build changed at ${origin} (${seen} -> ${version}); clearing cache`);
+  selfReloading = true;
+  await cache.clear(session.defaultSession, [origin]);
+  loadActiveGateway();
+}
+
+/**
+ * Manual escape hatch, on the File menu and the tray. Clears the active
+ * gateway's caches — or every gateway's, if none is active, which is the case
+ * on the error page where this is most likely to be reached for.
+ */
+async function clearCacheAndReload() {
+  const active = activeOrigin();
+  const origins = active ? [active] : gatewayOrigins();
+  console.log(`[claw] clearing cache for ${origins.join(', ') || '(no gateway)'}`);
+  await cache.clear(session.defaultSession, origins);
+  // Drop the recorded ids too, so the load that follows records what it finds
+  // instead of comparing against a build whose cache no longer exists.
+  forgetBuildIds(origins);
+  loadActiveGateway();
+}
+
+/**
+ * Clear once on the first run after an app upgrade, before anything loads.
+ *
+ * A new build brings a new Electron and a new preload; leaving a worker from
+ * the previous one in place is the same staleness by a different route. A
+ * profile with no recorded version is a fresh install, not an upgrade.
+ */
+async function clearOnAppUpgrade() {
+  const previous = config.get().appVersion;
+  const current = app.getVersion();
+  if (previous === current) return;
+  config.update({ appVersion: current, swVersions: {} });
+  if (!previous) return;
+  console.log(`[claw] upgraded ${previous} -> ${current}; clearing web cache`);
+  await cache.clear(session.defaultSession, gatewayOrigins());
+}
+
 /* --------------------------------------------------------------- login gate */
 
 // Password mode has no URL handoff — the Control UI parses only `gatewayUrl`,
@@ -516,6 +619,7 @@ function createMainWindow() {
       return;
     }
     maybeAutofill(wc);
+    void maybeRefreshForNewBuild(wc);
   });
 
   wc.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL, isMainFrame) => {
@@ -751,6 +855,7 @@ function buildMenu() {
         ...(isMac ? [] : [{ label: 'Settings…', accelerator: 'Ctrl+,', click: () => openSettings() }]),
         { label: 'Reload', accelerator: 'CmdOrCtrl+R', click: () => (showingError ? loadActiveGateway() : page()?.reload()) },
         { label: 'Reconnect to gateway', accelerator: 'CmdOrCtrl+Shift+R', click: () => loadActiveGateway() },
+        { label: 'Clear cache and reload', click: () => { void clearCacheAndReload(); } },
         { type: 'separator' },
         isMac ? { role: 'close' } : { label: 'Quit', accelerator: 'Ctrl+Q', click: () => { quitting = true; app.quit(); } },
       ],
@@ -794,6 +899,10 @@ function buildTray() {
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Open Claw Desktop', click: showMainWindow },
     { label: 'Reconnect', click: () => { showMainWindow(); loadActiveGateway(); } },
+    // Also on the tray, not just the File menu: Windows runs with
+    // `autoHideMenuBar`, so the menu is behind an Alt press exactly when the
+    // window is in the state that makes you want this.
+    { label: 'Clear cache and reload', click: () => { showMainWindow(); void clearCacheAndReload(); } },
     { type: 'separator' },
     {
       label: 'Gateway',
@@ -1014,7 +1123,7 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   app.on('second-instance', showMainWindow);
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     if (process.platform === 'win32') app.setAppUserModelId('com.azuretek.claw-desktop');
 
     // The default session only ever serves our own file:// pages; the gateway
@@ -1033,6 +1142,12 @@ if (!app.requestSingleInstanceLock()) {
     if (!shortcut.ok) console.warn(`[claw] global shortcut not registered: ${shortcut.error}`);
 
     if (process.argv.includes('--hidden')) config.update({ startHidden: true });
+
+    // Before the first load, not after: clearing a service worker out from
+    // under a page it is already controlling leaves that page on the old
+    // bundle until something reloads it.
+    await clearOnAppUpgrade().catch((err) => console.warn(`[claw] cache clear failed: ${err.message}`));
+
     createMainWindow();
 
     app.on('activate', showMainWindow);

@@ -30,6 +30,15 @@ function blank() {
     themeMode: null,
     // host -> "sha256/BASE64", pinned on first accept. See src/certs.js.
     trustedCerts: {},
+    // origin -> Control UI build id as of the last successful load, so an
+    // upgraded gateway has its service-worker cache dropped exactly once rather
+    // than on every connect. Learned, never configured; see src/cache.js.
+    swVersions: {},
+    // Version of this app that last ran. An app upgrade brings a new Electron
+    // and a new preload, so its caches are cleared once on the first run after.
+    // null on a fresh profile, which is deliberately *not* an upgrade: there is
+    // nothing stale in a cache that does not exist yet.
+    appVersion: null,
   };
 }
 
@@ -45,7 +54,13 @@ function read() {
     const raw = JSON.parse(fs.readFileSync(file(), 'utf8'));
     // Shallow-merge so a config written by an older build never loses new keys,
     // and a hand-edited file missing a key still boots.
-    cache = { ...base, ...raw, window: { ...base.window, ...(raw.window || {}) }, trustedCerts: { ...(raw.trustedCerts || {}) } };
+    cache = {
+      ...base,
+      ...raw,
+      window: { ...base.window, ...(raw.window || {}) },
+      trustedCerts: { ...(raw.trustedCerts || {}) },
+      swVersions: { ...(raw.swVersions || {}) },
+    };
     if (!Array.isArray(cache.gateways) || cache.gateways.length === 0) cache.gateways = base.gateways;
   } catch {
     // Keep the unreadable file in place as evidence; run from defaults this boot.

@@ -200,6 +200,44 @@ opens in the right colours instead of flashing the wrong palette for as long as
 the gateway takes to answer — over Tailscale to a sleeping box, that is not a
 flash.
 
+## Stale UI after an upgrade
+
+The Control UI is a PWA. Its service worker keys a cache on a build id embedded
+in `sw.js` and serves everything under `/assets/` cache-first, without
+revalidating. That is fine in a browser, where you close the tab and the next
+navigation re-checks `sw.js`. It is not fine here: this app closes to the tray
+rather than quitting, so a document can sit for weeks without a single
+navigation, still controlled by the worker an older gateway installed. What you
+see is an app still showing yesterday's Control UI after the gateway under it
+was upgraded.
+
+Three ways out, in order of how little you have to notice:
+
+- **The gateway was upgraded.** After every successful load the app reads the
+  build id out of `sw.js` and compares it to the one recorded for that gateway
+  in `config.json` (`swVersions`). If it moved, the caches are dropped and the
+  page reloads — once, automatically.
+- **This app was upgraded.** A new build brings a new Electron and a new
+  preload, so the first run after a version change clears the caches before
+  anything loads. A profile with no recorded `appVersion` is a fresh install,
+  not an upgrade, and clears nothing.
+- **Neither, but it still looks wrong.** **File → Clear cache and reload**, also
+  on the tray menu. It is on the tray deliberately: Windows runs with
+  `autoHideMenuBar`, so the menu is behind an Alt press exactly when the window
+  is in the state that makes you want this.
+
+All three drop the same three things and nothing else: the service-worker
+registration, its Cache Storage, and the HTTP + compiled-code caches.
+
+**Cookies, localStorage and IndexedDB are never touched, and that boundary is
+load-bearing.** The gateway's paired device identity lives in origin storage, so
+a blunt `clearStorageData()` with no `storages` list would make the Gateway see
+a brand-new client and report a login from an unrecognised device — the same
+failure the per-gateway partition scheme used to cause (see the comment above
+`configureSession` in `src/main.js`). `src/cache.js` keeps caches and storage
+apart so that stays true even when someone is in a hurry, and
+`test/cache.test.js` asserts it.
+
 ## Settings
 
 Everything lives in one window (**Cmd/Ctrl+,**, or the tray menu). It keeps a
@@ -285,6 +323,7 @@ Windows on Windows. Two ways:
 
 ```
 src/main.js          app lifecycle, window, tray, menus, navigation guards
+src/cache.js         drops the Control UI's cached copy of itself, never its storage
 src/certs.js         trust-on-first-use certificate pinning
 src/profile.js       one-time profile move for the OpenClaw -> Claw Desktop rename
 src/chrome.js        title strip geometry + theme adopted from the page
