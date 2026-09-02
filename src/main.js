@@ -33,13 +33,13 @@ let mainWindow = null;
 // child view rather than in the window's own WebContents, because a child view
 // can be given bounds and a window's own contents cannot.
 //
-// On Windows that is the entire mechanism behind the reserved title strip: the
-// view starts below the caption buttons, so the page's viewport genuinely
-// excludes them and nothing it draws can land underneath — not a header, not a
-// docked panel, not a `position: fixed` overlay anchored to the corner. On
-// macOS and Linux the view simply fills the window and this costs nothing.
+// That is the entire mechanism behind the reserved title strip: the view starts
+// below the window buttons, so the page's viewport genuinely excludes them and
+// nothing it draws can land underneath — not a header, not a docked panel, not a
+// `position: fixed` overlay anchored to a corner. Linux keeps its OS frame, so
+// there the view simply fills the window and this costs nothing.
 let pageView = null;
-// The strip above it, on Windows only. See ui/titlebar.html.
+// The strip above it, on macOS and Windows. See ui/titlebar.html.
 let stripView = null;
 // Settings is a view layered over the main window's contents, not a window of
 // its own. It stays a separate WebContents on purpose: the page holds the
@@ -94,8 +94,8 @@ function page() {
  * this has to run on every event that changes it; one missed event leaves the
  * page the wrong size or the modal floating in a corner.
  *
- * The strip's height is the only thing the page gives up, and it is zero
- * everywhere except Windows.
+ * The strip's height is the only thing the page gives up, and it is zero on
+ * Linux, which keeps its OS frame.
  */
 function layoutViews() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -410,7 +410,7 @@ function attachContextMenu(wc) {
 /* --------------------------------------------------------------- title strip */
 
 /**
- * The strip the app draws above the page on Windows.
+ * The strip the app draws above the page, carrying the window buttons.
  *
  * Deliberately inert: no preload, no IPC bridge, no script (its CSP forbids
  * one). It is a coloured, draggable band with a label, and the label is written
@@ -506,14 +506,11 @@ function createMainWindow() {
   wc.on('did-finish-load', () => {
     wc.setZoomLevel(config.get().zoomLevel || 0);
     // Our own pages (first-run settings, the error page) want the Control UI's
-    // tokens, not its native-host marker class — that class exists to make the
-    // *UI's* header behave like a title bar, and these pages have no such
-    // header. The drag region they need is their own `.dragbar`.
+    // design tokens. The gateway's page gets nothing injected at all.
     if (wc.getURL().startsWith('file://')) {
       applyThemeCss(wc);
       return;
     }
-    chrome.applyToPage(wc);
     maybeAutofill(wc);
   });
 

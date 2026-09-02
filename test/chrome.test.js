@@ -11,125 +11,79 @@ const chrome = require('../src/chrome');
 // Collapse whitespace so assertions describe the rule, not the indentation.
 const flat = (css) => css.replace(/\s+/g, ' ').trim();
 
-test('hostClass marks only macOS, where the UI header IS the title bar', () => {
-  assert.strictEqual(chrome.hostClass('darwin'), 'openclaw-native-macos');
-  // Windows deliberately gets no marker class. The app draws a real strip above
-  // the page there, so the page should lay itself out as an ordinary page;
-  // setting the class would grow the UI's headers to titlebar height and inset
-  // them for buttons that are no longer over the page — reserving twice.
-  assert.strictEqual(chrome.hostClass('win32'), null);
-  assert.strictEqual(chrome.hostClass('linux'), null);
-});
-
 test('the app owns the chrome on both desktop platforms', () => {
-  // `enabled` is not `hostClass !== null` any more: Windows owns its chrome
-  // through the reserved strip rather than through the marker class.
   assert.strictEqual(chrome.enabled('darwin'), true);
   assert.strictEqual(chrome.enabled('win32'), true);
+  // Linux window managers vary too much to hand back a frameless window the
+  // user can reliably move, resize and close, so the OS frame stays.
   assert.strictEqual(chrome.enabled('linux'), false);
 });
 
-test('only Windows takes height away from the page', () => {
+test('both desktop platforms reserve the strip; Linux reserves nothing', () => {
+  assert.strictEqual(chrome.contentInset('darwin').top, chrome.STRIP_HEIGHT);
   assert.strictEqual(chrome.contentInset('win32').top, chrome.STRIP_HEIGHT);
-  assert.ok(chrome.STRIP_HEIGHT > 0);
-  // macOS hands the page the whole window; the UI's own header doubles as the
-  // title bar and the traffic lights float over it.
-  assert.strictEqual(chrome.contentInset('darwin').top, 0);
   assert.strictEqual(chrome.contentInset('linux').top, 0);
+  assert.ok(chrome.STRIP_HEIGHT > 0);
 });
 
-// The regression that forced this architecture. Windows draws its caption
-// buttons over the top-right of the web contents, and that rectangle eats
-// clicks. Three separate elements were found there and insetted in turn — the
-// chat header, a docked side panel's header, the empty "Open a tab" header —
-// before the custodian panel ("New agent") settled it: `.cp--right` is
-// `position: fixed; right: 0`, so no ancestor's padding can move it. Neither can
-// an image lightbox, nor any future popover anchored to that corner.
+// The regression that forced this architecture, and the reason there is nothing
+// left to assert about injected CSS.
 //
-// So the page must not be insetted at all; it must be smaller. Any padding rule
-// reappearing here means someone has gone back to guessing which element is at
-// the edge today.
-test('nothing is injected into the page to dodge the caption buttons', () => {
-  const css = flat(chrome.dragCss('win32'));
-  assert.strictEqual(css, '', 'Windows must inject no page CSS at all');
-
-  for (const platform of ['darwin', 'win32', 'linux']) {
-    const sheet = flat(chrome.dragCss(platform));
-    assert.ok(!sheet.includes('padding-right'), `${platform} must not inset the right edge`);
-    // `.sidebar-region` was the anchor for every one of the failed handoffs.
-    // macOS still names `.side-panel__header` — as a drag region, which is a
-    // different thing entirely — so the ban is on the layout-state selector.
-    assert.ok(!sheet.includes('sidebar-region'), `${platform} must not key off sidebar layout state`);
+// Window buttons drawn over the page take the click, and "which element is under
+// them" has no stable answer. On Windows: the chat pane header, then a docked
+// side panel's header, then the empty "Open a tab" header, then the custodian
+// panel -- `position: fixed; right: 0`, so no ancestor's padding could move it.
+// On macOS: the sidebar brand row, then any routed page's own top-left content
+// once the nav collapses. Five insets, five layout states, five silent misses.
+//
+// A padding rule reappearing here means someone has gone back to guessing.
+test('the app injects nothing into the gateway page', () => {
+  for (const name of ['dragCss', 'applyToPage', 'hostClass']) {
+    assert.strictEqual(
+      chrome[name], undefined,
+      `${name} is gone: the page must not be styled or marked by the app`,
+    );
   }
 });
 
-test('the strip clears the caption buttons, measured with a safe fallback', () => {
+test('the strip clears the window buttons at whichever end they are', () => {
+  const mac = flat(chrome.stripCss('darwin'));
+  const win = flat(chrome.stripCss('win32'));
+
+  for (const css of [mac, win]) {
+    assert.ok(css.includes(`--strip-height: ${chrome.STRIP_HEIGHT}px`), 'height has one owner');
+  }
+
+  // macOS: traffic lights at the left, so the label starts after them.
+  assert.ok(mac.includes(`--strip-pad-start: ${chrome.MAC_CONTENT_INSET}px`));
+  assert.ok(!mac.includes('titlebar-area'), 'macOS has no window controls overlay');
+
+  // Windows: caption buttons at the right.
+  assert.ok(win.includes('--strip-pad-start: 12px'), 'nothing to clear on the left');
+  assert.match(win, /--strip-pad-end: max\(/, 'clearance must have a floor');
+  assert.ok(win.includes(`${chrome.WIN_CONTROLS_FALLBACK}px`));
+});
+
+test('the Windows caption width is measured, with a floor when it cannot be', () => {
   // A constant cannot follow DPI changes, resize or maximise: a 150px guess was
   // wrong by 13px against a real 150%-scaled display, which measured 137px.
   assert.match(chrome.WIN_CONTROLS_WIDTH, /env\(titlebar-area-x, 0px\)/);
   assert.match(chrome.WIN_CONTROLS_WIDTH, /env\(titlebar-area-width, 100vw\)/);
-
-  const css = flat(chrome.stripCss());
-  assert.ok(css.includes(`--strip-height: ${chrome.STRIP_HEIGHT}px`), 'height has one owner');
-  // Those env() vars are published to the window's main frame, and the strip is
-  // a child view where they may be absent — in which case the calc resolves to
-  // 0px and the label would slide under the close button. `max()` is what stops
-  // that being a silent failure.
-  assert.ok(css.includes('max('), 'clearance must have a floor');
-  assert.ok(css.includes(`${chrome.WIN_CONTROLS_FALLBACK}px`));
-  assert.ok(chrome.WIN_CONTROLS_FALLBACK >= 137, 'fallback must clear real buttons');
+  // Those env vars are published to the window's main frame, and the strip is a
+  // child view where they may be absent -- the calc would then resolve to 0px
+  // and put the label under the close button. Hence the floor.
+  assert.ok(chrome.WIN_CONTROLS_FALLBACK >= 137, 'floor must clear real buttons');
 });
 
-test('macOS gets no right-edge inset at all', () => {
-  // Traffic lights are top-left; nothing floats over the right edge.
-  const css = flat(chrome.dragCss('darwin'));
-  assert.ok(!css.includes('padding-right'), 'macOS must not inset the right edge');
-  assert.ok(!css.includes('titlebar-area-width'), 'macOS has no window controls overlay');
-});
-
-// The Control UI's own `--shell-titlebar-inset` is 12px while the nav is
-// expanded and lands only on `.chat-pane__header`, so with the sidebar open the
-// traffic lights sit on top of `.sidebar-brand` — the workspace avatar and agent
-// name. Upstream leaves that to the host; this is the host.
-test('macOS clears the traffic lights off the sidebar top row', () => {
-  const css = flat(chrome.dragCss('darwin'));
-  assert.ok(
-    css.includes(
-      'html.openclaw-native-macos .sidebar-brand { padding-left: ' +
-        `calc(${chrome.MAC_CONTENT_INSET}px - var(--sidebar-pad-x, 10px)); }`,
-    ),
-    'sidebar brand row must be inset past the traffic lights',
-  );
-  // Derived from the button geometry we set, not a magic number: three 12px
-  // lights on a 20px pitch from MAC_LIGHTS_X, plus a deliberate gap.
+test('the macOS label inset stays the sum of its parts', () => {
   assert.strictEqual(
     chrome.MAC_CONTENT_INSET,
     chrome.MAC_LIGHTS_X + chrome.MAC_LIGHTS_SPAN + chrome.MAC_LIGHTS_GAP,
-    'inset must stay the sum of its parts, not drift into a literal',
+    'inset must not drift into a literal',
   );
   // Clearing the last light is necessary but not sufficient: at a 10px gap the
-  // agent name read as crowded against the close button.
-  assert.ok(
-    chrome.MAC_LIGHTS_GAP >= 20,
-    'the name needs breathing room, not just non-overlap',
-  );
-  // Windows has no lights on the left, so it must not pay this cost.
-  assert.ok(!flat(chrome.dragCss('win32')).includes('sidebar-pad-x'));
-});
-
-test('header controls stay clickable inside the drag regions', () => {
-  // -webkit-app-region: drag swallows mouse-down on every descendant until each
-  // is carved back out, and a missed control fails silently.
-  // macOS only: Windows injects nothing, because its title bar is the app's own
-  // strip rather than the UI's header.
-  for (const platform of ['darwin']) {
-    const css = flat(chrome.dragCss(platform));
-    assert.match(css, /\.chat-pane__header[^}]*-webkit-app-region: drag/);
-    assert.match(css, /no-drag/);
-    for (const carved of ['button', 'a', 'openclaw-tooltip', 'wa-dropdown']) {
-      assert.ok(css.includes(carved), `${platform}: ${carved} must be carved out of the drag region`);
-    }
-  }
+  // label read as crowded against the close button.
+  assert.ok(chrome.MAC_LIGHTS_GAP >= 20, 'the label needs breathing room');
 });
 
 /* ------------------------------------------------------------------- theme */

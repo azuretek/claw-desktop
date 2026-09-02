@@ -320,8 +320,10 @@ body.frameless .center { height: calc(100% - 62px); }
   display: flex;
   align-items: center;
   height: var(--strip-height, 36px);
-  /* Keep the label clear of the caption buttons. */
-  padding-inline: 12px var(--strip-controls-width, 160px);
+  /* Keep the label clear of the window buttons at whichever end they are:
+     traffic lights on the left on macOS, caption buttons on the right on
+     Windows. Both come from src/chrome.js. */
+  padding-inline: var(--strip-pad-start, 12px) var(--strip-pad-end, 160px);
   /* A hairline is the only thing separating strip from page; without it a
      light theme reads as one flat field and the window looks unfinished. */
   border-bottom: 1px solid var(--border);
