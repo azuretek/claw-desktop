@@ -88,11 +88,33 @@ test('a bottom-docked panel leaves the inset on the chat header', () => {
 });
 
 test('macOS gets no right-edge inset at all', () => {
-  // Traffic lights are top-left, and the Control UI already insets that side
-  // itself via --shell-titlebar-inset.
+  // Traffic lights are top-left; nothing floats over the right edge.
   const css = flat(chrome.dragCss('darwin'));
   assert.ok(!css.includes('padding-right'), 'macOS must not inset the right edge');
   assert.ok(!css.includes('titlebar-area-width'), 'macOS has no window controls overlay');
+});
+
+// The Control UI's own `--shell-titlebar-inset` is 12px while the nav is
+// expanded and lands only on `.chat-pane__header`, so with the sidebar open the
+// traffic lights sit on top of `.sidebar-brand` — the workspace avatar and agent
+// name. Upstream leaves that to the host; this is the host.
+test('macOS clears the traffic lights off the sidebar top row', () => {
+  const css = flat(chrome.dragCss('darwin'));
+  assert.ok(
+    css.includes(
+      'html.openclaw-native-macos .sidebar-brand { padding-left: ' +
+        `calc(${chrome.MAC_CONTENT_INSET}px - var(--sidebar-pad-x, 10px)); }`,
+    ),
+    'sidebar brand row must be inset past the traffic lights',
+  );
+  // Derived from the button geometry we set, not a magic number: three 12px
+  // lights on a 20px pitch from MAC_LIGHTS_X, plus a gap.
+  assert.ok(
+    chrome.MAC_CONTENT_INSET > chrome.MAC_LIGHTS_X + 52,
+    'inset must clear the far edge of the last light',
+  );
+  // Windows has no lights on the left, so it must not pay this cost.
+  assert.ok(!flat(chrome.dragCss('win32')).includes('sidebar-pad-x'));
 });
 
 test('header controls stay clickable inside the drag regions', () => {

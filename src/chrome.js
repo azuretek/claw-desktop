@@ -39,13 +39,25 @@ const SYMBOL = '#c9c9c9';
 const WIN_CONTROLS_WIDTH =
   'calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw))';
 
+// Left edge to keep clear on macOS for the traffic lights. There is no `env()`
+// for these — the position is ours, set below — so it is derived, not guessed:
+// three 12px buttons on a 20px pitch span 52px, from `MAC_LIGHTS_X`, plus a gap.
+//
+// This is needed because the Control UI's own left inset does NOT cover the
+// nav sidebar. `--shell-titlebar-inset` is 12px while the nav is expanded and
+// 90px only once it collapses, and it is applied solely to `.chat-pane__header`
+// — upstream assumes that with the sidebar open the lights land on the sidebar
+// and its host has dealt with them. Ours has to.
+const MAC_LIGHTS_X = 16;
+const MAC_CONTENT_INSET = MAC_LIGHTS_X + 52 + 10;
+
 /** BrowserWindow options for the main window. */
 function windowOptions() {
   if (process.platform === 'darwin') {
     return {
       titleBarStyle: 'hiddenInset',
       // Vertically centre the 16px lights in the header row the UI now draws.
-      trafficLightPosition: { x: 16, y: (TITLEBAR_HEIGHT - 16) / 2 },
+      trafficLightPosition: { x: MAC_LIGHTS_X, y: (TITLEBAR_HEIGHT - 16) / 2 },
     };
   }
   if (process.platform === 'win32') {
@@ -111,19 +123,39 @@ function dragCss(platform = process.platform) {
       padding-right: ${WIN_CONTROLS_WIDTH};
     }`
     : '';
+
+  // The traffic lights float over the sidebar's top row, so shift that row's
+  // content clear of them. Horizontal, not vertical: pushing the row down far
+  // enough to clear a 12px light that starts 17px from the top would cost a
+  // ~70px empty strip, because the row's own content is 34px tall and sits
+  // inside the same band. `--sidebar-pad-x` is the padding `.sidebar-shell`
+  // already contributes; subtracting it makes the total measured from the
+  // window edge, which is where the lights are measured from too.
+  const leftInset = platform === 'darwin'
+    ? `
+    ${scope} .sidebar-brand {
+      padding-left: calc(${MAC_CONTENT_INSET}px - var(--sidebar-pad-x, 10px));
+    }`
+    : '';
+
+  // Rows that become part of the title bar, and so drag the window.
+  const bars = ['.chat-pane__header', '.side-panel__header', '.sidebar-brand'];
+  const interactive =
+    ':is(button, a, input, select, textarea, summary, [role="button"], [role="tab"],' +
+    ' [role="menuitem"], [contenteditable], [class*="menu"], [class*="control"],' +
+    ' wa-dropdown, wa-button, openclaw-tooltip)';
   return `
     ${scope} { --openclaw-native-titlebar-height: ${TITLEBAR_HEIGHT}px; }
-    ${scope} .chat-pane__header,
-    ${scope} .side-panel__header {
+    ${bars.map((b) => `${scope} ${b}`).join(',\n    ')} {
       -webkit-app-region: drag; app-region: drag;
     }
     /* Carve every interactive thing back out, or the header's own buttons stop
        responding — a drag region swallows the mouse-down before the page sees
        it. Deliberately broad: a missed control is a dead control. */
-    ${scope} .chat-pane__header :is(button, a, input, select, textarea, summary, [role="button"], [role="tab"], [role="menuitem"], [contenteditable], [class*="menu"], [class*="control"], wa-dropdown, wa-button, openclaw-tooltip),
-    ${scope} .side-panel__header :is(button, a, input, select, textarea, summary, [role="button"], [role="tab"], [role="menuitem"], [contenteditable], [class*="menu"], [class*="control"], wa-dropdown, wa-button, openclaw-tooltip) {
+    ${bars.map((b) => `${scope} ${b} ${interactive}`).join(',\n    ')} {
       -webkit-app-region: no-drag; app-region: no-drag;
     }
+    ${leftInset}
     ${rightInset}
   `;
 }
@@ -153,6 +185,8 @@ function applyTheme() {
 module.exports = {
   TITLEBAR_HEIGHT,
   WIN_CONTROLS_WIDTH,
+  MAC_LIGHTS_X,
+  MAC_CONTENT_INSET,
   windowOptions,
   dragCss,
   applyToPage,
