@@ -2,16 +2,21 @@
 
 // Gateways offered on first run. These are only *suggestions* — the setup screen
 // lets you edit or replace them, and nothing here is contacted until you pick one.
+// Edit this list for your own machines, or just add gateways in Settings.
 //
-// The tailnet name is the canonical address: Tailscale Serve terminates a real
-// Let's Encrypt cert on :443 and proxies to the gateway's self-signed listener on
-// localhost:18789, so this URL is bare (no port) and raises no cert warning.
-// The :18789 entries talk to that inner listener directly and WILL present a
-// self-signed cert — expect the trust prompt (see src/certs.js).
+// On addressing, because the difference decides whether you get a certificate
+// warning:
+//
+//   - A Tailscale Serve address (`https://<host>.<tailnet>.ts.net`, no port)
+//     terminates a real Let's Encrypt certificate and proxies to the gateway's
+//     own listener. Prefer it: no port, no warning.
+//   - A direct `:18789` address reaches that inner listener, which generates its
+//     own certificate, so expect the trust prompt on first connect — see
+//     src/certs.js for how the fingerprint is pinned.
+//   - Loopback needs no TLS at all.
 const suggestedGateways = [
-  { label: 'your-host (tailnet)', url: 'https://your-host.your-tailnet.ts.net' },
-  { label: 'your-host (tailnet IP)', url: 'https://100.64.0.1:18789' },
-  { label: 'your-host (LAN)', url: 'https://192.168.1.10:18789' },
+  { label: 'Local gateway', url: 'http://127.0.0.1:18789' },
+  { label: 'Tailscale Serve (edit me)', url: 'https://your-host.your-tailnet.ts.net' },
 ];
 
 module.exports = {

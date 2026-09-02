@@ -201,7 +201,7 @@ Windows on Windows. Two ways:
   ```
 
   It installs to `%LOCALAPPDATA%\Programs\Claw Desktop`. A full `build:win` takes
-  roughly half an hour on the Blade. **Passing `--x64` does not shorten it** —
+  roughly half an hour on a recent laptop. **Passing `--x64` does not shorten it** —
   the per-target `arch` list in `electron-builder.yml` wins over the CLI flag,
   so you still get x64, arm64, and the combined installer. Edit the config if
   you genuinely want one arch. Use `gh repo clone` rather
@@ -237,3 +237,18 @@ src/preload.js       narrow IPC bridge, exposed to local pages only
 src/ui/              settings and connection-error pages
 scripts/make-icons.mjs
 ```
+
+## Status and licence
+
+A personal project, shared because it might be useful — not a product. There is
+no support commitment and no release schedule, builds are unsigned, and the
+window chrome depends on marker classes the Control UI exposes but does not
+document as an API, so an upstream restyle could require a fix here.
+
+Issues and pull requests are welcome; slow replies are likely.
+
+**Not affiliated with the OpenClaw project.** This is an independent client for
+its Control UI. "Claw Desktop" is deliberately not "OpenClaw" — see
+[src/profile.js](src/profile.js) for the rename's one lasting consequence.
+
+MIT — see [LICENSE](LICENSE).

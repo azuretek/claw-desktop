@@ -5,7 +5,7 @@
   "description": "Claw Desktop - a desktop shell for the OpenClaw Control UI",
   "main": "src/main.js",
   "author": "Abi Renhart",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "private": true,
   "scripts": {
     "test": "node --test test/*.test.js",
@@ -20,5 +20,13 @@
     "electron": "^44.1.1",
     "electron-builder": "^26.15.3",
     "sharp": "^0.35.4"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/azuretek/claw-desktop.git"
+  },
+  "homepage": "https://github.com/azuretek/claw-desktop",
+  "bugs": {
+    "url": "https://github.com/azuretek/claw-desktop/issues"
   }
 }
