@@ -130,6 +130,13 @@ function builtDmgs(dir = path.join(ROOT, 'dist')) {
  * It rewrites the file, which is why dmg.writeUpdateInfo is false — see
  * electron-builder.yml for why nothing that updates reads a DMG checksum.
  *
+ * The DMG must already be signed, which dmg.sign in electron-builder.yml does.
+ * A ticket staples to a code signature, so stapling an unsigned DMG does
+ * nothing while still reporting success: `stapler validate` falls back to
+ * fetching the ticket from Apple, so it passes on a file Gatekeeper then
+ * rejects for "no usable signature". That is checked here rather than trusted,
+ * because the failure is otherwise invisible until someone downloads a release.
+ *
  * Gated on the same credentials that enabled notarization, so a build without
  * them is unaffected, and on darwin, where xcrun exists.
  */
@@ -146,6 +153,13 @@ function stapleDmgs(opts = {}) {
 
   for (const dmg of dmgs) {
     const name = path.basename(dmg);
+
+    // Fail loudly rather than staple into the void if dmg.sign ever regresses.
+    if (run('codesign', ['-dv', dmg], { stdio: 'ignore' }).status !== 0) {
+      err(`  ! ${name} is not signed, so a ticket cannot be stapled to it`);
+      return 1;
+    }
+
     log(`  • notarizing ${name}`);
     const auth = ['--key', env.APPLE_API_KEY, '--key-id', env.APPLE_API_KEY_ID, '--issuer', env.APPLE_API_ISSUER];
     const sub = run('xcrun', ['notarytool', 'submit', dmg, ...auth, '--wait'], { cwd: ROOT, stdio: 'inherit' });

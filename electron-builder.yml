@@ -70,12 +70,28 @@ mac:
 # even though the app inside is accepted. scripts/build.js notarizes and staples
 # each DMG afterwards to close that gap.
 #
+# `sign` has to be true for that to mean anything, and it must happen HERE
+# rather than in scripts/build.js. A notarization ticket is stapled to a code
+# signature, so stapling an unsigned DMG silently does nothing: `stapler
+# validate` still passes, because it falls back to fetching the ticket from
+# Apple over the network, while Gatekeeper reports "no usable signature" on the
+# file a user downloaded. The chain is sign, notarize, staple, in that order.
+#
+# It cannot be done after the build because electron-builder imports the CI
+# certificate into a temporary keychain and destroys it on finish, so the
+# identity no longer exists by the time scripts/build.js runs.
+#
+# electron-builder's own note calls DMG signing unnecessary and warns it causes
+# errors "in combination with notarization requirements". That holds for signing
+# a DMG nobody notarizes; here the DMG is notarized straight afterwards.
+#
 # Stapling rewrites the file, which would invalidate any checksum already
 # recorded for it. latest-mac.yml lists a sha512 and size per artifact, so the
 # DMGs are kept out of it: macOS auto-update reads the zip (electron-updater's
 # MacUpdater hands that to Squirrel.Mac), and the DMG is only ever a human
 # download. Nothing that updates reads a DMG checksum, so nothing goes stale.
 dmg:
+  sign: true
   writeUpdateInfo: false
 
 win:

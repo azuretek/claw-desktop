@@ -242,10 +242,14 @@ still builds.
   and notarization requires it.
   - electron-builder notarizes the `.app` and then wraps it in a DMG, so the DMG
     itself is never submitted — Gatekeeper accepts the app and rejects the
-    container a user actually downloads. `scripts/build.js` submits and staples
-    each DMG afterwards. Because stapling rewrites the file,
-    `dmg.writeUpdateInfo` is `false` so no stale checksum is left behind;
-    macOS updates read the zip, never the DMG.
+    container a user actually downloads. `dmg.sign` signs it and
+    `scripts/build.js` submits and staples each one afterwards: sign, notarize,
+    staple, in that order. The signature is not optional, because a ticket
+    staples *to* a signature — stapling an unsigned DMG changes nothing while
+    still reporting success, since `stapler validate` falls back to fetching the
+    ticket from Apple. Because stapling rewrites the file,
+    `dmg.writeUpdateInfo` is `false` so no stale checksum is left behind; macOS
+    updates read the zip, never the DMG.
 - **Windows** — only removes the SmartScreen warning; it is **not** needed for
   auto-update. [Azure Artifact Signing](https://azure.microsoft.com/en-us/pricing/details/artifact-signing/)
   (formerly Trusted Signing) is $9.99/month and open to individual developers,

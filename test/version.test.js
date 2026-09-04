@@ -233,28 +233,39 @@ test('a non-darwin build never shells out to xcrun', () => {
   assert.deepEqual(run.calls, []);
 });
 
-test('each DMG is submitted and then stapled', () => {
+test('each DMG is checked for a signature, submitted, then stapled', () => {
   const run = recorder();
   assert.equal(build.stapleDmgs({ env: ASC, run, platform: 'darwin', dmgs: DMGS, ...quiet }), 0);
-  assert.equal(run.calls.length, 4);
+  assert.equal(run.calls.length, 6);
   for (const [i, dmg] of DMGS.entries()) {
-    const submit = run.calls[i * 2];
+    assert.deepEqual(run.calls[i * 3], ['codesign', '-dv', dmg]);
+    const submit = run.calls[i * 3 + 1];
     assert.deepEqual(submit.slice(0, 4), ['xcrun', 'notarytool', 'submit', dmg]);
     // --wait, or the staple below races a submission Apple has not finished.
     assert.ok(submit.includes('--wait'), 'submit must wait for the result');
     assert.ok(submit.includes(ASC.APPLE_API_ISSUER), 'a Team key needs its issuer');
-    assert.deepEqual(run.calls[i * 2 + 1], ['xcrun', 'stapler', 'staple', dmg]);
+    assert.deepEqual(run.calls[i * 3 + 2], ['xcrun', 'stapler', 'staple', dmg]);
   }
 });
 
-test('a failed notarization stops the build and never staples', () => {
+// A ticket staples to a code signature. Stapling an unsigned DMG reports
+// success and changes nothing, and `stapler validate` then passes by fetching
+// the ticket from Apple -- so the build has to catch this, not the check after.
+test('an unsigned DMG fails the build instead of being stapled into the void', () => {
   const run = recorder(1);
   assert.equal(build.stapleDmgs({ env: ASC, run, platform: 'darwin', dmgs: DMGS, ...quiet }), 1);
-  assert.equal(run.calls.length, 1, 'must not staple a DMG Apple rejected');
+  assert.equal(run.calls.length, 1, 'must not submit a DMG that cannot hold a ticket');
+  assert.equal(run.calls[0][0], 'codesign');
+});
+
+test('a failed notarization stops the build and never staples', () => {
+  const run = recorder(0, 1);
+  assert.equal(build.stapleDmgs({ env: ASC, run, platform: 'darwin', dmgs: DMGS, ...quiet }), 1);
+  assert.equal(run.calls.length, 2, 'must not staple a DMG Apple rejected');
 });
 
 test('a failed staple is reported rather than passing as success', () => {
-  const run = recorder(0, 1);
+  const run = recorder(0, 0, 1);
   assert.equal(build.stapleDmgs({ env: ASC, run, platform: 'darwin', dmgs: DMGS, ...quiet }), 1);
 });
 
