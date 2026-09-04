@@ -65,6 +65,19 @@ mac:
     - target: zip
       arch: [arm64, x64]
 
+# electron-builder notarizes and staples the .app, then builds the DMG around
+# it, so the DMG itself is never submitted and Gatekeeper rejects the container
+# even though the app inside is accepted. scripts/build.js notarizes and staples
+# each DMG afterwards to close that gap.
+#
+# Stapling rewrites the file, which would invalidate any checksum already
+# recorded for it. latest-mac.yml lists a sha512 and size per artifact, so the
+# DMGs are kept out of it: macOS auto-update reads the zip (electron-updater's
+# MacUpdater hands that to Squirrel.Mac), and the DMG is only ever a human
+# download. Nothing that updates reads a DMG checksum, so nothing goes stale.
+dmg:
+  writeUpdateInfo: false
+
 win:
   icon: build/icon.png
   target:

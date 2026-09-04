@@ -49,11 +49,13 @@ test('signed macOS gets the same treatment as Windows', () => {
   assert.equal(p.autoDownload, true);
 });
 
-test('macOS ships unsigned today, and the flag says so', () => {
-  // Guards against the constant being flipped before signing actually lands,
-  // which would produce updates that fail inside Squirrel with no explanation.
-  assert.equal(updates.MAC_SIGNED, false);
-  assert.equal(updates.policy({ platform: 'darwin', packaged: true }).action, updates.NOTIFY);
+test('macOS ships signed, and the flag says so', () => {
+  // The constant is compiled in, so it has to track what the release workflow
+  // actually produces. These two move together in both directions: a true flag
+  // on an unsigned build fails inside Squirrel with no explanation, and a false
+  // one on a signed build gives up an install it could have done.
+  assert.equal(updates.MAC_SIGNED, true);
+  assert.equal(updates.policy({ platform: 'darwin', packaged: true }).action, updates.INSTALL);
 });
 
 /* -------------------------------------------------------------------- Linux */

@@ -104,6 +104,64 @@ function builderArgs(argv, version, env = process.env) {
   return [...argv, '--publish', 'never', `--config.extraMetadata.version=${version}`, ...notarizeArgs(env)];
 }
 
+/** The DMGs this build produced, or [] when there are none. */
+function builtDmgs(dir = path.join(ROOT, 'dist')) {
+  try {
+    return fs
+      .readdirSync(dir)
+      .filter((f) => f.endsWith('.dmg'))
+      .sort()
+      .map((f) => path.join(dir, f));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Notarize and staple each DMG.
+ *
+ * electron-builder notarizes the .app and staples it, then wraps it in a DMG,
+ * so the container itself is never submitted. The result passes the check people
+ * do not perform (the app, once dragged out) and fails the one they do (opening
+ * the download): Gatekeeper reports the app as "Notarized Developer ID" and the
+ * DMG around it as "rejected, no usable signature".
+ *
+ * Stapling embeds the ticket in the DMG so it validates without a network call.
+ * It rewrites the file, which is why dmg.writeUpdateInfo is false — see
+ * electron-builder.yml for why nothing that updates reads a DMG checksum.
+ *
+ * Gated on the same credentials that enabled notarization, so a build without
+ * them is unaffected, and on darwin, where xcrun exists.
+ */
+function stapleDmgs(opts = {}) {
+  const {
+    env = process.env,
+    run = spawnSync,
+    platform = process.platform,
+    dmgs = builtDmgs(),
+    log = console.log,
+    err = console.error,
+  } = opts;
+  if (notarizeArgs(env).length === 0 || platform !== 'darwin') return 0;
+
+  for (const dmg of dmgs) {
+    const name = path.basename(dmg);
+    log(`  • notarizing ${name}`);
+    const auth = ['--key', env.APPLE_API_KEY, '--key-id', env.APPLE_API_KEY_ID, '--issuer', env.APPLE_API_ISSUER];
+    const sub = run('xcrun', ['notarytool', 'submit', dmg, ...auth, '--wait'], { cwd: ROOT, stdio: 'inherit' });
+    if (sub.status !== 0) {
+      err(`  ! notarization failed for ${name}`);
+      return 1;
+    }
+    const staple = run('xcrun', ['stapler', 'staple', dmg], { cwd: ROOT, stdio: 'inherit' });
+    if (staple.status !== 0) {
+      err(`  ! stapling failed for ${name}`);
+      return 1;
+    }
+  }
+  return 0;
+}
+
 function main(argv) {
   const packageVersion = JSON.parse(fs.readFileSync(PKG, 'utf8')).version;
   const resolved = resolveVersion(packageVersion);
@@ -127,9 +185,13 @@ function main(argv) {
     console.error(`  ! could not run electron-builder: ${run.error.message}`);
     process.exit(1);
   }
-  process.exit(run.status === null ? 1 : run.status);
+  if (run.status !== 0) process.exit(run.status === null ? 1 : run.status);
+
+  // Only after a successful build: there is nothing to notarize otherwise, and
+  // a failed build must keep its own exit code.
+  process.exit(stapleDmgs());
 }
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { resolveVersion, builderEntry, builderArgs, notarizeArgs };
+module.exports = { resolveVersion, builderEntry, builderArgs, notarizeArgs, builtDmgs, stapleDmgs };

@@ -33,13 +33,16 @@
 // carries no `identity` key on purpose, and notarization is switched on per-run
 // by scripts/build.js when the App Store Connect variables are present.
 //
-// This constant describes the builds people install, which come from CI. A
-// Developer ID now exists on the signing machine, so a local `npm run build:mac`
-// is signed and notarized -- but CI has no certificate yet, and this flag is
-// compiled in. Setting it true before CI can sign would tell an unsigned release
-// build to hand itself to Squirrel.Mac, which is the exact failure the flag
-// exists to avoid. Flip it in the same commit that gives CI a certificate.
-const MAC_SIGNED = false;
+// This constant describes the builds people install, which come from CI, and
+// the release workflow now signs and notarizes the mac leg with a Developer ID.
+// It stays a compiled-in constant rather than a runtime `codesign` probe: the
+// answer only changes when the build pipeline changes, which is a commit.
+//
+// The hazard to remember if signing is ever removed: this must go back to false
+// in the same commit. A true value on an unsigned build hands the update to
+// Squirrel.Mac, which refuses to install over an unsigned running bundle -- the
+// exact failure this flag exists to avoid.
+const MAC_SIGNED = true;
 
 /** What to do when a newer version exists. */
 const INSTALL = 'install'; // download it and offer to restart

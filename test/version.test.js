@@ -201,6 +201,67 @@ test('a partial App Store Connect environment does not enable notarization', () 
   }
 });
 
+/* --------------------------------------------------------------- stapleDmgs */
+
+/** A spawnSync stand-in that records calls and returns the given exit codes. */
+function recorder(...statuses) {
+  const calls = [];
+  const run = (cmd, args) => {
+    calls.push([cmd, ...args]);
+    return { status: statuses.length ? statuses.shift() : 0 };
+  };
+  run.calls = calls;
+  return run;
+}
+
+const DMGS = ['/d/A-arm64.dmg', '/d/A-x64.dmg'];
+
+// The function narrates to the console; a passing test run should not look like
+// a failing build.
+const quiet = { log: () => {}, err: () => {} };
+
+test('no Apple credentials means the DMGs are left alone', () => {
+  const run = recorder();
+  assert.equal(build.stapleDmgs({ env: {}, run, platform: 'darwin', dmgs: DMGS, ...quiet }), 0);
+  assert.deepEqual(run.calls, []);
+});
+
+// The build also runs on Windows, where there is no xcrun to call.
+test('a non-darwin build never shells out to xcrun', () => {
+  const run = recorder();
+  assert.equal(build.stapleDmgs({ env: ASC, run, platform: 'win32', dmgs: DMGS, ...quiet }), 0);
+  assert.deepEqual(run.calls, []);
+});
+
+test('each DMG is submitted and then stapled', () => {
+  const run = recorder();
+  assert.equal(build.stapleDmgs({ env: ASC, run, platform: 'darwin', dmgs: DMGS, ...quiet }), 0);
+  assert.equal(run.calls.length, 4);
+  for (const [i, dmg] of DMGS.entries()) {
+    const submit = run.calls[i * 2];
+    assert.deepEqual(submit.slice(0, 4), ['xcrun', 'notarytool', 'submit', dmg]);
+    // --wait, or the staple below races a submission Apple has not finished.
+    assert.ok(submit.includes('--wait'), 'submit must wait for the result');
+    assert.ok(submit.includes(ASC.APPLE_API_ISSUER), 'a Team key needs its issuer');
+    assert.deepEqual(run.calls[i * 2 + 1], ['xcrun', 'stapler', 'staple', dmg]);
+  }
+});
+
+test('a failed notarization stops the build and never staples', () => {
+  const run = recorder(1);
+  assert.equal(build.stapleDmgs({ env: ASC, run, platform: 'darwin', dmgs: DMGS, ...quiet }), 1);
+  assert.equal(run.calls.length, 1, 'must not staple a DMG Apple rejected');
+});
+
+test('a failed staple is reported rather than passing as success', () => {
+  const run = recorder(0, 1);
+  assert.equal(build.stapleDmgs({ env: ASC, run, platform: 'darwin', dmgs: DMGS, ...quiet }), 1);
+});
+
+test('builtDmgs returns nothing when there is no dist directory', () => {
+  assert.deepEqual(build.builtDmgs('/nope/not/a/dir'), []);
+});
+
 /* ------------------------------------------------------------------ checkTag */
 
 test('a matching tag passes', () => {

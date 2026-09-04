@@ -46,15 +46,14 @@ Windows installers cannot be cross-built without Wine.
 
 ### After installing
 
-- **macOS** — builds are **unsigned**, so clear the quarantine flag once,
-  otherwise Gatekeeper refuses to open it:
+- **macOS** — nothing to do. Releases are signed with a Developer ID and
+  notarized by Apple, and both the app and the `.dmg` carry a stapled
+  notarization ticket, so Gatekeeper opens them without a warning and without
+  needing a network check.
 
-  ```sh
-  xattr -dr com.apple.quarantine "/Applications/Claw Desktop.app"
-  ```
-
-- **Windows** — SmartScreen will warn for the same reason. *More info → Run
-  anyway.* Installs to `%LOCALAPPDATA%\Programs\Claw Desktop`.
+- **Windows** — SmartScreen will warn, because Windows builds are still
+  unsigned. *More info → Run anyway.* Installs to
+  `%LOCALAPPDATA%\Programs\Claw Desktop`.
 
 - **Upgrading from the old *OpenClaw*-named build** — quit it first, then
   uninstall it: the `appId` changed, so the installer will not replace it. Your
@@ -199,47 +198,54 @@ Claw Desktop 1.0.0 (a1b2c3d4e5, built 2026-09-02 08:41Z) · Electron 44.1.1 · �
 
 - **No Web Push.** Electron has no push service, so notifications arrive only
   while the app runs. Install the PWA alongside if you need waking when closed.
-- **Unsigned builds.** No Apple Developer ID or Windows signing certificate —
-  hence the `xattr` step and the SmartScreen warning.
-- **Auto-update is Windows-only.** See below — it is a signing limit, not a
-  configuration gap.
+- **Unsigned Windows builds.** No Windows signing certificate yet — hence the
+  SmartScreen warning. macOS is signed and notarized.
+- **No auto-update on Linux.** See below.
 - **Not a node.** No screen, camera, or `system.run`. That is Windows Hub's job.
 
 ## Updates
 
 The app checks for a new release a minute after launch and every six hours
 after, and on demand from **Check for updates…** on the File (or app) menu.
-What it does with one depends on the platform, because installing an update
-requires a signed build on macOS and does not on Windows:
+What it does with one depends on the platform:
 
 | Platform | Behaviour | Why |
 |---|---|---|
 | **Windows** | Downloads in the background, then offers **Restart to update** — in a dialog and on the tray menu | `NsisUpdater` skips signature verification when the build has no `publisherName`, so an unsigned build updates normally |
-| **macOS** | Tells you a release exists and links to it; you replace the app by hand | `MacUpdater` hands off to native Squirrel.Mac, which requires a valid signature on the running bundle and fails with `Could not get code signature for running application` |
-| **Linux** | Same as macOS | AppImage updates work in principle, but the app is not distributed that way and the path is untested |
+| **macOS** | Same as Windows | `MacUpdater` hands off to native Squirrel.Mac, which requires a valid signature on the running bundle. Releases are signed with a Developer ID, so it can install |
+| **Linux** | Tells you a release exists and links to it; you replace the app by hand | AppImage updates work in principle, but the app is not distributed that way and the path is untested |
 
 Automatic checks are silent unless there is something to act on; a manual check
 always answers, including "you are up to date". A failed check — offline, proxy,
 rate limit — is logged and never interrupts you.
 
-macOS becomes the same as Windows the moment builds are signed: set
-`MAC_SIGNED = true` in [src/updates.js](src/updates.js). That is the only code
-change; the rest is credentials.
+`MAC_SIGNED` in [src/updates.js](src/updates.js) is what tells macOS it may
+install. It is compiled in, so it has to track what the release workflow really
+produces: if signing is ever removed, that constant goes back to `false` in the
+same commit, or updates fail inside Squirrel with no explanation.
 
-### Enabling signed builds
+### Signing
 
-Nothing in the repo forces an unsigned build — there is no `identity: null`. The
-standard electron-builder behaviour applies: sign if an identity is
-discoverable, warn and continue if not.
+Nothing in the repo forces an unsigned build — there is no `identity: null`, and
+`notarize` is turned on per run rather than hardcoded. The rule both follow is
+that signing is a credential, not a configuration: sign and notarize when the
+credentials are there, build unsigned when they are not. A fork with no secrets
+still builds.
 
-- **macOS** — an [Apple Developer Program](https://developer.apple.com/programs/)
-  membership ($99/year) is required for a *Developer ID Application*
-  certificate; without one, notarization is rejected too. Install the
-  certificate in the keychain (or set `CSC_LINK` + `CSC_KEY_PASSWORD` in CI),
-  set `notarize: true` in `electron-builder.yml`, and provide `APPLE_ID`,
-  `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID`. Notarization also needs
-  `hardenedRuntime`. CI currently sets `CSC_IDENTITY_AUTO_DISCOVERY: false` so a
-  runner cannot pick up a stray identity — remove that when signing.
+- **macOS** — signed and notarized. An
+  [Apple Developer Program](https://developer.apple.com/programs/) membership
+  ($99/year) provides the *Developer ID Application* certificate. CI reads
+  `CSC_LINK` + `CSC_KEY_PASSWORD` for the certificate, and `APPLE_API_KEY`,
+  `APPLE_API_KEY_ID` + `APPLE_API_ISSUER` for notarization. The API key must be
+  an App Store Connect **Team** key: Apple documents that individual keys cannot
+  use `notarytool`. `hardenedRuntime` is already electron-builder's default,
+  and notarization requires it.
+  - electron-builder notarizes the `.app` and then wraps it in a DMG, so the DMG
+    itself is never submitted — Gatekeeper accepts the app and rejects the
+    container a user actually downloads. `scripts/build.js` submits and staples
+    each DMG afterwards. Because stapling rewrites the file,
+    `dmg.writeUpdateInfo` is `false` so no stale checksum is left behind;
+    macOS updates read the zip, never the DMG.
 - **Windows** — only removes the SmartScreen warning; it is **not** needed for
   auto-update. [Azure Artifact Signing](https://azure.microsoft.com/en-us/pricing/details/artifact-signing/)
   (formerly Trusted Signing) is $9.99/month and open to individual developers,
@@ -345,8 +351,8 @@ scripts/make-icons.mjs   regenerates the icon PNGs from the SVG artwork
 ## Status and licence
 
 A personal project, shared because it might be useful — not a product. No
-support commitment, no release schedule, unsigned builds. Issues and pull
-requests are welcome; slow replies are likely.
+support commitment, no release schedule, unsigned Windows builds. Issues and
+pull requests are welcome; slow replies are likely.
 
 **Not affiliated with the OpenClaw project.** This is an independent client for
 its Control UI.
