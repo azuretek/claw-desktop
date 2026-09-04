@@ -50,34 +50,52 @@ function versionFromTag(ref) {
   return parse(version) ? version : null;
 }
 
-/**
- * The version an untagged build should carry.
- *
- * Every `workflow_dispatch` build used to be named for whatever was in
- * package.json, so three different installers arrived called
- * `ClawDesktop-Setup-1.0.0-x64.exe` and only an Actions run id told them apart.
- * Naming the commit in the version fixes the filename *and* what the app reports
- * about itself, which is the same fact in two places rather than two facts.
- *
- * It sorts *below* the release it is named for, which is the useful direction:
- * a dev build is a thing heading towards that version, not past it, so a machine
- * left on one is behind the release rather than stranded above it.
- *
- * `dirty` is carried into the name for the same reason build-info.js records it:
- * a commit hash on a build made from a modified tree describes something that
- * was never committed, so the name has to say so or it is a lie. Local builds
- * are where this actually happens.
- */
-function devVersion(base, commit, { dirty = false } = {}) {
+/** The next patch version, with any prerelease dropped. */
+function nextPatch(base) {
   const v = parse(base);
   if (!v) throw new Error(`not a releasable version: ${base}`);
+  return format({ major: v.major, minor: v.minor, patch: v.patch + 1, prerelease: null });
+}
+
+/**
+ * The version an untagged build should carry: `1.0.1-dev.<count>.<sha>`.
+ *
+ * Three things have to be true at once, and each part earns its place.
+ *
+ * It must sort ABOVE the last release and below the next, so it names the NEXT
+ * patch. Dev builds used to carry the current version (`1.0.0-dev.…`), which
+ * sorts below `1.0.0` — fine while dev builds were only artifacts, wrong now
+ * that they are a channel people install: every build after the 1.0.0 release
+ * would look older than the release.
+ *
+ * It must INCREASE, so the count of commits leads. A commit sha does not order:
+ * semver compares prerelease identifiers ASCII-lexically, so `dev.f3a1…` and
+ * `dev.a92b…` sort by whichever hash happens to be smaller, and an updater's
+ * "is this newer" becomes a coin flip. A count is monotonic on a branch that
+ * only gains commits, and unlike a CI run number a local build can reproduce it.
+ *
+ * It must name the exact code, so the sha stays. It costs nothing to order:
+ * identifiers are compared left to right, the count differs first for any two
+ * distinct commits, and the sha is only ever reached on a tie -- which means the
+ * same commit, hence the same sha.
+ *
+ * `dirty` is carried for the same reason build-info.js records it: a commit hash
+ * on a build made from a modified tree describes something that was never
+ * committed, so the name has to say so or it is a lie. Local builds are where
+ * this actually happens.
+ */
+function devVersion(base, commit, { dirty = false, count = null } = {}) {
+  const target = parse(nextPatch(base));
   const sha = String(commit || '').trim().toLowerCase();
-  if (!/^[0-9a-f]{7,40}$/.test(sha)) return dirty ? format({ ...v, prerelease: 'dev.dirty' }) : base;
-  // Dots rather than a bare concatenation so semver reads `dev` and the sha as
-  // separate identifiers; a sha that is all digits would otherwise be compared
-  // numerically against `dev`.
-  const tag = `dev.${sha.slice(0, 10)}${dirty ? '.dirty' : ''}`;
-  return format({ ...v, prerelease: tag });
+
+  // Dots rather than a bare concatenation so semver reads each part as its own
+  // identifier; a sha that is all digits would otherwise be compared numerically
+  // against `dev`.
+  const parts = ['dev'];
+  if (Number.isInteger(count) && count > 0) parts.push(String(count));
+  if (/^[0-9a-f]{7,40}$/.test(sha)) parts.push(sha.slice(0, 10));
+  if (dirty) parts.push('dirty');
+  return format({ ...target, prerelease: parts.join('.') });
 }
 
 /**
@@ -107,4 +125,4 @@ function checkTag(ref, packageVersion) {
   return { ok: true, version: tagged };
 }
 
-module.exports = { parse, format, versionFromTag, devVersion, checkTag };
+module.exports = { parse, format, versionFromTag, nextPatch, devVersion, checkTag };

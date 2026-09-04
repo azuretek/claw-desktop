@@ -66,8 +66,10 @@ function resolveVersion(packageVersion, env = process.env) {
   }
 
   const sha = git('rev-parse', 'HEAD');
+  const counted = Number(git('rev-list', '--count', 'HEAD'));
+  const count = Number.isInteger(counted) && counted > 0 ? counted : null;
   return {
-    version: version.devVersion(packageVersion, sha, { dirty }),
+    version: version.devVersion(packageVersion, sha, { dirty, count }),
     note: sha ? `dev build of ${String(sha).slice(0, 10)}${dirty ? ' (modified tree)' : ''}` : 'no git metadata',
   };
 }

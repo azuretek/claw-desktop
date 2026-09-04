@@ -39,7 +39,7 @@ function arg(argv, name, fallback) {
  * @returns {{ok: true, version: string, tagged: boolean, build: boolean, note: string}
  *          | {ok: false, reason: string}}
  */
-function decide({ ref, sha, packageVersion, eventName = 'push', headTags = [] }) {
+function decide({ ref, sha, packageVersion, eventName = 'push', headTags = [], count = null }) {
   const tagged = version.versionFromTag(ref);
   if (tagged) {
     const check = version.checkTag(ref, packageVersion);
@@ -47,15 +47,18 @@ function decide({ ref, sha, packageVersion, eventName = 'push', headTags = [] })
     return { ok: true, version: check.version, tagged: true, build: true, note: `tag ${ref} matches package.json` };
   }
 
-  const dev = version.devVersion(packageVersion, sha);
+  const dev = version.devVersion(packageVersion, sha, { count });
   const result = {
     ok: true,
     version: dev,
     tagged: false,
     build: true,
-    note: dev === packageVersion
-      ? 'untagged build with no usable commit; falling back to the package version'
-      : 'untagged build named for its commit',
+    // A missing count is worth saying out loud rather than absorbing: it means
+    // the checkout was shallow, and every dev build would then be indistinguish-
+    // able in ordering, which is the whole property this version exists for.
+    note: count
+      ? 'untagged build named for its commit count and sha'
+      : 'untagged build with NO COMMIT COUNT — is the checkout shallow? (needs fetch-depth: 0)',
   };
 
   // `git push --follow-tags` pushes the release commit and its tag together, and
@@ -71,6 +74,25 @@ function decide({ ref, sha, packageVersion, eventName = 'push', headTags = [] })
   }
 
   return result;
+}
+
+/**
+ * Commits reachable from HEAD, or null if git cannot say.
+ *
+ * This is what makes a dev version increase, so a shallow checkout returning 1
+ * for every build is the failure to watch for — `actions/checkout` is depth 1
+ * unless told otherwise. decide() reports a missing count rather than hiding it.
+ */
+function commitCount() {
+  try {
+    const out = execFileSync('git', ['rev-list', '--count', 'HEAD'], {
+      cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const n = Number(out.trim());
+    return Number.isInteger(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Tags pointing at HEAD. Empty if git has nothing to say — never throws. */
@@ -94,6 +116,7 @@ function main(argv) {
     sha: arg(argv, 'sha', process.env.GITHUB_SHA || ''),
     eventName: arg(argv, 'event', process.env.GITHUB_EVENT_NAME || 'push'),
     headTags: headTags(),
+    count: commitCount(),
     packageVersion,
   });
 

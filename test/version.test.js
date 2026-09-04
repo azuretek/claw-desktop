@@ -75,62 +75,91 @@ test('release-it is configured not to publish the GitHub Release itself', () => 
 
 /* --------------------------------------------------------------- dev versions */
 
-test('an untagged build is named for its commit', () => {
-  assert.equal(version.devVersion('1.0.0', SHA), '1.0.0-dev.758853d656');
+test('nextPatch bumps the patch and drops any prerelease', () => {
+  assert.equal(version.nextPatch('1.0.0'), '1.0.1');
+  assert.equal(version.nextPatch('2.9.13'), '2.9.14');
+  assert.equal(version.nextPatch('1.0.1-dev.5.abc1234567'), '1.0.2');
 });
 
-test('the dev version sorts below the release it heads towards', () => {
-  // Not decoration: it means a machine left on a dev build is *behind* the
-  // release rather than stranded above it.
+test('an untagged build carries its commit count and sha', () => {
+  assert.equal(version.devVersion('1.0.0', SHA, { count: 148 }), '1.0.1-dev.148.758853d656');
+});
+
+test('a dev build sorts ABOVE the release it follows and below the next', () => {
+  // Reversed deliberately. While dev builds were only CI artifacts, naming them
+  // for the current version put them below it, which read as "heading towards"
+  // that release. Now they are a channel people install, so every build after
+  // the 1.0.0 release must look NEWER than 1.0.0, not older.
   //
-  // Asserted structurally, because semver ordering is NOT string ordering —
-  // lexically '1.0.0' < '1.0.0-dev.x', the exact opposite. Semver §11 is what
-  // makes the claim true: same numeric triple, and "a pre-release version has
-  // lower precedence than the associated normal version".
-  const dev = version.parse(version.devVersion('1.0.0', SHA));
-  const base = version.parse('1.0.0');
-  assert.deepEqual(
-    [dev.major, dev.minor, dev.patch],
-    [base.major, base.minor, base.patch],
-    'a dev build must not change the numbers it is heading towards',
-  );
-  assert.ok(dev.prerelease, 'and must carry a prerelease tag, which is what puts it below');
-  assert.equal(base.prerelease, null);
+  // Asserted structurally, because semver ordering is NOT string ordering:
+  // lexically '1.0.1-dev.148' < '1.0.1', which here happens to agree, but
+  // '1.0.0' < '1.0.0-dev.x' is the exact opposite of the truth. Semver §11 is
+  // what makes the claim hold — a higher patch outranks, and a prerelease has
+  // lower precedence than its associated normal version.
+  const dev = version.parse(version.devVersion('1.0.0', SHA, { count: 148 }));
+  assert.deepEqual([dev.major, dev.minor, dev.patch], [1, 0, 1], 'must name the NEXT patch');
+  assert.ok(dev.prerelease, 'and stay a prerelease, which keeps it below that release');
+});
+
+test('a later commit gives a higher version, by a numeric identifier', () => {
+  // The property the count exists for. A sha does not order: semver compares
+  // alphanumeric identifiers ASCII-lexically, so two hashes sort by which
+  // happens to be smaller. These must compare as numbers, at the same position.
+  const a = version.parse(version.devVersion('1.0.0', SHA, { count: 9 })).prerelease.split('.');
+  const b = version.parse(version.devVersion('1.0.0', SHA, { count: 10 })).prerelease.split('.');
+  assert.equal(a[0], b[0], 'same channel identifier');
+  assert.ok(/^\d+$/.test(a[1]) && /^\d+$/.test(b[1]), 'the count must be a numeric identifier');
+  assert.ok(Number(a[1]) < Number(b[1]), '9 must sort below 10, which it would not as a string');
 });
 
 test('two commits give two different installer names', () => {
-  // The whole point. Three dispatch builds once produced three byte-different
-  // files all called ClawDesktop-Setup-1.0.0-x64.exe.
-  const a = version.devVersion('1.0.0', SHA);
-  const b = version.devVersion('1.0.0', '93dbc4e1122334455667788990011223344556677');
+  // Three dispatch builds once produced three byte-different files all called
+  // ClawDesktop-Setup-1.0.0-x64.exe.
+  const a = version.devVersion('1.0.0', SHA, { count: 148 });
+  const b = version.devVersion('1.0.0', '93dbc4e1122334455667788990011223344556677', { count: 149 });
   assert.notEqual(a, b);
 });
 
-test('dev is a separate identifier from the sha', () => {
-  // Without the dot, an all-digit sha would be compared numerically against
-  // `dev` by semver rather than as its own identifier.
-  assert.match(version.devVersion('1.0.0', SHA), /-dev\.[0-9a-f]{10}$/);
+test('the sha follows the count, so it never decides the ordering', () => {
+  // The sha is there to name the exact code, not to sort. It sits after the
+  // count, which differs for any two distinct commits, so it is only ever
+  // reached on a tie — and a tie means the same commit, hence the same sha.
+  const parts = version.parse(version.devVersion('1.0.0', SHA, { count: 148 })).prerelease.split('.');
+  assert.deepEqual(parts.slice(0, 2), ['dev', '148']);
+  assert.match(parts[2], /^[0-9a-f]{10}$/);
 });
 
-test('an unusable commit falls back to the plain version rather than inventing one', () => {
+test('a missing count still builds, rather than inventing an order', () => {
+  // A shallow checkout has no count. The build must not stop, but it must not
+  // pretend either: no count means no ordering guarantee, and build-version.js
+  // says so in its note.
+  assert.equal(version.devVersion('1.0.0', SHA), '1.0.1-dev.758853d656');
+  for (const bad of [0, -1, 1.5, '12', null]) {
+    assert.equal(version.devVersion('1.0.0', SHA, { count: bad }), '1.0.1-dev.758853d656', `for ${String(bad)}`);
+  }
+});
+
+test('an unusable commit still yields a buildable dev version', () => {
   for (const sha of ['', null, undefined, 'HEAD', 'zzzzzzz', '12345']) {
-    assert.equal(version.devVersion('1.0.0', sha), '1.0.0', `for ${String(sha)}`);
+    assert.equal(version.devVersion('1.0.0', sha, { count: 148 }), '1.0.1-dev.148', `for ${String(sha)}`);
   }
 });
 
 test('an uppercase sha is folded, so one commit is one version', () => {
-  assert.equal(version.devVersion('1.0.0', SHA.toUpperCase()), version.devVersion('1.0.0', SHA));
+  const opts = { count: 148 };
+  assert.equal(version.devVersion('1.0.0', SHA.toUpperCase(), opts), version.devVersion('1.0.0', SHA, opts));
 });
 
 test('a modified tree says so in the version', () => {
   // Same reason build-info.js records `dirty`: a commit hash on a build made
   // from a modified tree names something that was never committed.
-  assert.equal(version.devVersion('1.0.0', SHA, { dirty: true }), '1.0.0-dev.758853d656.dirty');
-  assert.equal(version.parse('1.0.0-dev.758853d656.dirty').prerelease, 'dev.758853d656.dirty');
+  const v = version.devVersion('1.0.0', SHA, { dirty: true, count: 148 });
+  assert.equal(v, '1.0.1-dev.148.758853d656.dirty');
+  assert.equal(version.parse(v).prerelease, 'dev.148.758853d656.dirty');
 });
 
 test('a modified tree with no usable commit still admits it is dirty', () => {
-  assert.equal(version.devVersion('1.0.0', '', { dirty: true }), '1.0.0-dev.dirty');
+  assert.equal(version.devVersion('1.0.0', '', { dirty: true, count: 148 }), '1.0.1-dev.148.dirty');
 });
 
 /* ------------------------------------------------- local build versioning */
@@ -303,18 +332,27 @@ test('a tag build that disagrees fails the whole run before anything is built', 
   assert.match(r.reason, /named for the wrong version/);
 });
 
-test('a dispatch build gets a commit-named dev version', () => {
-  const r = buildVersion.decide({ ref: 'refs/heads/main', sha: SHA, packageVersion: '1.0.0' });
+test('a dispatch build is versioned by commit count and sha', () => {
+  const r = buildVersion.decide({ ref: 'refs/heads/main', sha: SHA, packageVersion: '1.0.0', count: 148 });
   assert.deepEqual({ ok: r.ok, version: r.version, tagged: r.tagged },
-    { ok: true, version: '1.0.0-dev.758853d656', tagged: false });
+    { ok: true, version: '1.0.1-dev.148.758853d656', tagged: false });
 });
 
-test('a dispatch build with no usable commit still builds, under the plain version', () => {
-  // Degrading to the old behaviour beats failing a build over a cosmetic name.
-  const r = buildVersion.decide({ ref: '', sha: '', packageVersion: '1.0.0' });
+test('a shallow checkout still builds, and says the count is missing', () => {
+  // Failing the build would be worse, but absorbing it silently would be too:
+  // with no count every dev build orders arbitrarily, which is the one property
+  // the scheme exists to provide. The note has to name the likely cause.
+  const r = buildVersion.decide({ ref: 'refs/heads/main', sha: SHA, packageVersion: '1.0.0' });
   assert.equal(r.ok, true);
-  assert.equal(r.version, '1.0.0');
-  assert.match(r.note, /falling back/);
+  assert.equal(r.version, '1.0.1-dev.758853d656');
+  assert.match(r.note, /NO COMMIT COUNT/);
+  assert.match(r.note, /fetch-depth/);
+});
+
+test('a dispatch build with no usable commit still builds', () => {
+  const r = buildVersion.decide({ ref: '', sha: '', packageVersion: '1.0.0', count: 148 });
+  assert.equal(r.ok, true);
+  assert.equal(r.version, '1.0.1-dev.148');
 });
 
 /* --------------------------------------------------- build-or-stand-down */
@@ -361,7 +399,7 @@ test('a stood-down build still reports a version, so the output is never empty',
   // The workflow reads `version` from the same step whether or not it builds;
   // an empty output would fail the expression rather than skip cleanly.
   const r = buildVersion.decide({
-    ref: 'refs/heads/main', sha: SHA, packageVersion: '1.0.1', headTags: ['v1.0.1'],
+    ref: 'refs/heads/main', sha: SHA, packageVersion: '1.0.1', headTags: ['v1.0.1'], count: 148,
   });
-  assert.equal(r.version, '1.0.1-dev.758853d656');
+  assert.equal(r.version, '1.0.2-dev.148.758853d656');
 });

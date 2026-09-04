@@ -191,8 +191,16 @@ Claw Desktop 1.0.0 (a1b2c3d4e5, built 2026-09-02 08:41Z) · Electron 44.1.1 · �
 | `1.0.0 (a1b2c3d4e5, …)` | packaged from that commit on `main` |
 | `1.0.0 (fix-clicks a1b2c3d4e5, …)` | built from a branch — named, because that is the surprising case |
 | `1.0.0 (a1b2c3d4e5-dirty, …)` | uncommitted changes; the hash does **not** describe what shipped |
-| `1.0.0-dev.a1b2c3d4e5 (…)` | a CI dev build, versioned for its commit |
+| `1.0.1-dev.148.a1b2c3d4e5 (…)` | a dev build: the 148th commit, `a1b2c3d4e5`, heading towards 1.0.1 |
 | `1.0.0 (source build)` | `npm start`, which has no single commit to claim |
+
+A dev version reads `NEXT-dev.COUNT.SHA`. The count is what makes it *increase*
+— a commit hash does not order, because semver compares prerelease identifiers
+ASCII-lexically, so `dev.f3a1…` and `dev.a92b…` would sort by whichever hash
+happened to be smaller. The sha names the exact code and costs nothing to
+ordering: it sits after the count, which already differs for any two distinct
+commits. The version targets the *next* patch so a dev build sorts above the
+release it follows rather than below it.
 
 ## Known limits
 
