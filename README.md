@@ -30,6 +30,9 @@ away.
 
 - **Windows** — `ClawDesktop-Setup-<version>-<arch>.exe`. Per-user, no admin.
 - **macOS** — open the `.dmg` and drag to Applications.
+- **Linux** — `ClawDesktop-<version>-<arch>.AppImage`. `chmod +x` it and run it;
+  there is nothing to install. Keep it somewhere writable, because that file is
+  what an update replaces in place.
 
 **Or build it** — needed if no release covers your platform, and how the app is
 kept current on a machine you already develop on:
@@ -41,8 +44,12 @@ npm ci
 npm run build:mac        # or build:win / build:linux
 ```
 
-The installer lands in `dist/`. Build on the platform you are targeting —
-Windows installers cannot be cross-built without Wine.
+The installer lands in `dist/`. Build on the platform you are targeting: Windows
+installers need Wine to cross-build, and an AppImage needs the Linux `mksquashfs`
+electron-builder downloads, so `build:linux` fails on macOS with `spawn Unknown
+system error -86` — a Linux binary refused by the wrong kernel, not a
+misconfiguration. Each platform's release is built on its own runner for this
+reason. Both architectures of a given platform do cross-build fine.
 
 ### After installing
 
@@ -54,6 +61,10 @@ Windows installers cannot be cross-built without Wine.
 - **Windows** — SmartScreen will warn, because Windows builds are still
   unsigned. *More info → Run anyway.* Installs to
   `%LOCALAPPDATA%\Programs\Claw Desktop`.
+
+- **Linux** — nothing to do, and nothing installed. An AppImage is one
+  self-contained executable; it appears in the applications menu only if you add
+  it there yourself.
 
 - **Upgrading from the old *OpenClaw*-named build** — quit it first, then
   uninstall it: the `appId` changed, so the installer will not replace it. Your
@@ -209,7 +220,10 @@ release it follows rather than below it.
   while the app runs. Install the PWA alongside if you need waking when closed.
 - **Unsigned Windows builds.** No Windows signing certificate yet — hence the
   SmartScreen warning. macOS is signed and notarized.
-- **No auto-update on Linux.** See below.
+- **Linux auto-update needs the AppImage.** Unpacked or repackaged any other
+  way, the app says so rather than checking. AppImage is the only Linux target
+  built for that reason: the `.deb` and `.rpm` updaters install through `pkexec`,
+  so each background update would raise a password prompt.
 - **Not a node.** No screen, camera, or `system.run`. That is Windows Hub's job.
 
 ## Updates
@@ -227,7 +241,8 @@ What it does with a release depends on the platform:
 |---|---|---|
 | **Windows** | Downloads in the background, then offers **Restart to update** — in a dialog and on the tray menu | `NsisUpdater` skips signature verification when the build has no `publisherName`, so an unsigned build updates normally |
 | **macOS** | Same as Windows | `MacUpdater` hands off to native Squirrel.Mac, which requires a valid signature on the running bundle. Releases are signed with a Developer ID, so it can install |
-| **Linux** | Tells you a release exists and links to it; you replace the app by hand | AppImage updates work in principle, but the app is not distributed that way and the path is untested |
+| **Linux**, run as an AppImage | Same as Windows | `AppImageUpdater` overwrites the `.AppImage` the process was started from — no signature, no package manager, no root |
+| **Linux**, run any other way | Does not check, and says why | Without `APPIMAGE` in the environment there is no file to replace, and `isUpdaterActive()` returns false: every check would resolve to nothing, silently |
 
 Automatic checks are silent unless there is something to act on; a manual check
 always answers, including "you are up to date". A failed check — offline, proxy,

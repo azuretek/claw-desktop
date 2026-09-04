@@ -994,7 +994,7 @@ async function onUpdateAvailable(info, plan) {
   if (plan.action === updates.INSTALL) return;
 
   const { message, detail } = updates.availableMessage({
-    action: plan.action, version: info.version, current: app.getVersion(),
+    action: plan.action, version: info.version, current: app.getVersion(), reason: plan.reason,
   });
   const { response } = await dialog.showMessageBox({
     type: 'info', message, detail, buttons: ['Open release page', 'Later'], defaultId: 0, cancelId: 1,

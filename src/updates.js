@@ -16,9 +16,18 @@
 //             for running application". No configuration avoids that -- it
 //             needs an Apple Developer ID.
 //
-//   Linux     Notify only. AppImage updates work in principle, but the app is
-//             not distributed that way and the path is untested here; claiming
-//             an install we have never run is worse than telling the truth.
+//   Linux     Full auto-update, but only while running as an AppImage.
+//             `AppImageUpdater` replaces the .AppImage file the process was
+//             started from, so it needs no signature, no package manager and no
+//             root -- but it does need that file, which it finds through the
+//             `APPIMAGE` environment variable the AppImage runtime sets. Started
+//             any other way, `isUpdaterActive()` returns false and every check
+//             resolves to null without emitting anything, so the honest answer
+//             there is to not check and to say why.
+//
+//             That asymmetry is why AppImage is the only Linux target built. The
+//             .deb and .rpm updaters exist, but they run dpkg or rpm through
+//             pkexec, so every update raises a password prompt.
 //
 // Kept free of Electron so the policy can be tested for every platform from one
 // run, the same shape as chrome.js taking `platform` as a parameter.
@@ -56,9 +65,10 @@ const NONE = 'none'; // do not even check
  * @param {string} opts.platform   process.platform
  * @param {boolean} opts.packaged  app.isPackaged
  * @param {boolean} [opts.macSigned]
+ * @param {boolean} [opts.appImage]  running from an AppImage (Linux only)
  * @returns {{action: string, check: boolean, autoDownload: boolean, reason: string}}
  */
-function policy({ platform, packaged, macSigned = MAC_SIGNED }) {
+function policy({ platform, packaged, macSigned = MAC_SIGNED, appImage = Boolean(process.env.APPIMAGE) }) {
   // A source run has no app-update.yml and no version worth comparing.
   // electron-updater guards this itself (`app.isPackaged || forceDevUpdateConfig`)
   // but it does so by logging an error, which reads like a fault every `npm start`.
@@ -83,6 +93,23 @@ function policy({ platform, packaged, macSigned = MAC_SIGNED }) {
       };
   }
 
+  if (platform === 'linux') {
+    return appImage
+      ? { action: INSTALL, check: true, autoDownload: true, reason: 'an AppImage replaces itself in place' }
+      : {
+        action: NOTIFY,
+        // Not merely useless but actively misleading: AppImageUpdater's
+        // isUpdaterActive() is false without APPIMAGE, so checkForUpdates()
+        // returns null having emitted no event at all -- no 'error', no
+        // 'update-not-available'. A check that can only ever answer nothing is
+        // worse than one that explains itself, and main.js turns check:false
+        // into exactly that explanation.
+        check: false,
+        autoDownload: false,
+        reason: 'not running as an AppImage, so there is no file an update could replace',
+      };
+  }
+
   return { action: NOTIFY, check: true, autoDownload: false, reason: 'no tested install path on this platform' };
 }
 
@@ -91,15 +118,21 @@ function policy({ platform, packaged, macSigned = MAC_SIGNED }) {
  *
  * Split from the dialog call so the wording is testable and so the two
  * platforms cannot drift into saying the same thing about different outcomes.
+ *
+ * The "why not" half is the caller's `reason` rather than a sentence written in
+ * here. It used to say "because it is not code signed", which was true of the
+ * only platform that could reach it at the time and became false the moment
+ * Linux could reach it too — a dialog confidently naming the wrong cause.
  */
-function availableMessage({ action, version, current }) {
+function availableMessage({ action, version, current, reason = null }) {
   const headline = `Claw Desktop ${version} is available.`;
   if (action === INSTALL) {
     return { message: headline, detail: `You are on ${current}. It will download in the background, and you can restart to apply it.` };
   }
+  const because = reason ? `, because ${reason}` : '';
   return {
     message: headline,
-    detail: `You are on ${current}. This build cannot update itself, because it is not code signed — `
+    detail: `You are on ${current}. This build cannot update itself${because} — `
       + 'download the new version and replace the app to upgrade.',
   };
 }

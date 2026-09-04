@@ -77,6 +77,13 @@ jobs:
           - os: windows-latest
             script: build:win
             artifact: windows
+          # One x64 runner covers both AppImage architectures. An AppImage is
+          # its target's runtime concatenated with a squashfs image, and
+          # electron-builder downloads the runtime per architecture, so nothing
+          # here is compiled for the host CPU and no arm64 runner is needed.
+          - os: ubuntu-latest
+            script: build:linux
+            artifact: linux
     runs-on: ${{ matrix.os }}
     steps:
       # Pinned to the commit this run was triggered for, not left to resolve a
@@ -238,14 +245,16 @@ jobs:
             dist/*.dmg
             dist/*.zip
             dist/*.exe
+            dist/*.AppImage
             # Update metadata, emitted because electron-builder.yml declares a
             # `publish` provider. An updater reads these to learn a release's
             # version, size and checksum; without them the release is just files.
             #
             # Both channels are named explicitly, not `*.yml`: a stable build
-            # writes latest-mac.yml / latest.yml and a dev build writes
-            # dev-mac.yml / dev.yml, while the build also drops builder-debug.yml
-            # in dist/, which has no business in a release.
+            # writes latest-mac.yml / latest.yml / latest-linux.yml and a dev
+            # build writes dev-mac.yml / dev.yml / dev-linux.yml, while the build
+            # also drops builder-debug.yml in dist/, which has no business in a
+            # release.
             dist/latest*.yml
             dist/dev*.yml
             dist/*.blockmap

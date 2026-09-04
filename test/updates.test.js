@@ -15,7 +15,9 @@ const assert = require('node:assert');
 
 const updates = require('../src/updates');
 
-const packaged = (platform, macSigned) => updates.policy({ platform, packaged: true, macSigned });
+// appImage is pinned rather than left to default, so a stray APPIMAGE in the
+// environment — or a test run from inside one — cannot change what these assert.
+const packaged = (platform, macSigned) => updates.policy({ platform, packaged: true, macSigned, appImage: false });
 
 /* ------------------------------------------------------------------ Windows */
 
@@ -60,8 +62,35 @@ test('macOS ships signed, and the flag says so', () => {
 
 /* -------------------------------------------------------------------- Linux */
 
-test('Linux notifies rather than claiming an untested install path', () => {
-  assert.equal(packaged('linux').action, updates.NOTIFY);
+const linux = (appImage) => updates.policy({ platform: 'linux', packaged: true, appImage });
+
+test('an AppImage installs updates, like Windows', () => {
+  // AppImageUpdater overwrites the file the process was started from. No
+  // signature, no package manager, no root — the one Linux path that installs
+  // without a privilege prompt.
+  const p = linux(true);
+  assert.equal(p.action, updates.INSTALL);
+  assert.equal(p.check, true);
+  assert.equal(p.autoDownload, true);
+});
+
+test('Linux outside an AppImage does not check at all', () => {
+  // The distinction that matters: not "cannot install" but "cannot answer".
+  // AppImageUpdater.isUpdaterActive() is false without APPIMAGE, so
+  // checkForUpdates() resolves to null having emitted no event — neither
+  // 'error' nor 'update-not-available'. Left checking, a manual check would
+  // hang silently and About would say "no check yet this run" forever.
+  const p = linux(false);
+  assert.equal(p.check, false, 'a check that can only answer nothing must not be made');
+  assert.equal(p.autoDownload, false);
+  assert.match(p.reason, /AppImage/);
+});
+
+test('Linux update behaviour is a runtime fact, not a build-time one', () => {
+  // Unlike MAC_SIGNED, which is compiled in because it only changes when the
+  // pipeline does, this changes per launch: the same binary auto-updates when
+  // run as an AppImage and cannot when unpacked next to it.
+  assert.notEqual(linux(true).action, linux(false).action);
 });
 
 /* ------------------------------------------------------------- source runs */
@@ -104,9 +133,22 @@ test('the install message offers a restart', () => {
 test('the notify message says why it cannot update itself', () => {
   // Otherwise "a new version is available" with no install button reads as a
   // broken updater rather than a deliberate limit.
-  const m = updates.availableMessage({ action: updates.NOTIFY, version: '1.1.0', current: '1.0.0' });
-  assert.match(m.detail, /not code signed/);
+  const m = updates.availableMessage({
+    action: updates.NOTIFY, version: '1.1.0', current: '1.0.0', reason: 'it is not code signed',
+  });
+  assert.match(m.detail, /because it is not code signed/);
   assert.doesNotMatch(m.detail, /restart/i);
+});
+
+test('the notify message takes its reason from the policy, not from a hardcoded one', () => {
+  // It used to say "because it is not code signed" unconditionally, which was
+  // true of the only platform that could reach it then. Linux can reach it now
+  // for an entirely different reason, and a dialog naming the wrong cause is
+  // worse than one naming none.
+  const p = updates.policy({ platform: 'linux', packaged: true, appImage: false });
+  const m = updates.availableMessage({ action: p.action, version: '1.1.0', current: '1.0.0', reason: p.reason });
+  assert.match(m.detail, /AppImage/);
+  assert.doesNotMatch(m.detail, /code signed/);
 });
 
 /* ------------------------------------------------------------------ quietness */

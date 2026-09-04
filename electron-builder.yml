@@ -117,7 +117,35 @@ nsis:
   createStartMenuShortcut: true
   shortcutName: Claw Desktop
 
+# AppImage is the only Linux target, and that is an update decision rather than a
+# packaging preference. electron-updater ships four Linux updaters; AppImage is
+# the only one that installs without a privilege prompt, because it overwrites
+# the single file the app is running from. The .deb and .rpm updaters shell out
+# to dpkg or rpm through pkexec, so every background update would raise a
+# password dialog — see src/updates.js.
+#
+# `arch` is explicit for the same reason as win: without it electron-builder
+# builds only the host architecture, so an x64 CI runner would quietly publish a
+# release with nothing an arm64 machine can run. Both are cross-built here; an
+# AppImage is its architecture's runtime prepended to a squashfs image, so the
+# host CPU never has to match.
+#
+# artifactName matches the other two platforms. The default carries a space
+# ("Claw Desktop-1.0.0.AppImage"), and the released filename is what people type
+# into chmod.
+#
+# syncDesktopName pairs with `desktopName` in package.json, and matters more for
+# this app than for most. Electron sets WM_CLASS from the desktop entry name, and
+# that is how a desktop environment links a running window back to its .desktop
+# file. Without the pair, GNOME and KDE show Claw Desktop under a generic Electron
+# icon in the dock and in alt-tab — for an app that lives in the tray for weeks,
+# the icon is most of what anyone sees of it.
 linux:
   icon: build/icon.png
   category: Utility
-  target: [AppImage]
+  artifactName: ClawDesktop-${version}-${arch}.${ext}
+  synopsis: Desktop shell for the OpenClaw Control UI
+  syncDesktopName: true
+  target:
+    - target: AppImage
+      arch: [x64, arm64]

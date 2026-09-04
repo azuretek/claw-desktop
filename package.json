@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "description": "Claw Desktop - a desktop shell for the OpenClaw Control UI",
   "main": "src/main.js",
+  "desktopName": "claw-desktop.desktop",
   "author": "Abi Renhart",
   "license": "MIT",
   "private": true,
