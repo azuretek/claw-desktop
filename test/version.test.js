@@ -193,8 +193,23 @@ test('electron-builder is launched as a script, not as a command on PATH', () =>
 // notarization adds to it, so reading the ambient process.env would make them
 // pass or fail depending on whose shell ran them.
 test('every build refuses to publish and carries its version', () => {
-  const args = build.builderArgs(['--mac'], '1.2.3-dev.abc', {});
-  assert.deepEqual(args, ['--mac', '--publish', 'never', '--config.extraMetadata.version=1.2.3-dev.abc']);
+  const args = build.builderArgs(['--mac'], '1.2.3', {});
+  assert.deepEqual(args, ['--mac', '--publish', 'never', '--config.extraMetadata.version=1.2.3']);
+});
+
+/* --------------------------------------------------------------- channels */
+
+test('a dev build publishes to the dev channel', () => {
+  // Without this the dev build would write latest-mac.yml, overwriting the
+  // metadata a stable release depends on, and the running dev app would then
+  // look for dev-mac.yml that nothing ever produced.
+  assert.deepEqual(build.channelArgs('1.2.3-dev.148.abc1234567'), ['--config.publish.channel=dev']);
+  assert.ok(build.builderArgs(['--mac'], '1.2.3-dev.148.abc1234567', {}).includes('--config.publish.channel=dev'));
+});
+
+test('a stable build passes no channel, so electron-builder uses latest', () => {
+  assert.deepEqual(build.channelArgs('1.2.3'), []);
+  assert.ok(!build.builderArgs(['--mac'], '1.2.3', {}).some((a) => a.startsWith('--config.publish.channel')));
 });
 
 test('caller flags come first, so they cannot be overridden by ours', () => {

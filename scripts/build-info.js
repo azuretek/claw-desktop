@@ -39,8 +39,10 @@ function git(...args) {
  *
  * Git is asked first and the environment second, because git describes the
  * source that is actually being compiled while `GITHUB_SHA` describes what the
- * workflow was triggered for. They agree for our tag and dispatch builds; where
- * they could differ, the compiled tree is the honest answer.
+ * workflow was triggered for. In CI they cannot disagree — the workflow pins
+ * both checkouts to `github.sha` for exactly this reason — so the fallback is
+ * for a checkout with no git at all. Where they could differ, the compiled tree
+ * is the honest answer.
  */
 function collect(env = process.env) {
   const commit = git('rev-parse', 'HEAD') || env.GITHUB_SHA || null;
@@ -51,8 +53,9 @@ function collect(env = process.env) {
   const status = git('status', '--porcelain');
   const dirty = status !== null && status !== '';
 
-  // Detached HEAD — which is how actions/checkout leaves a tag build — reports
-  // the branch as the literal "HEAD", which names nothing.
+  // Detached HEAD — which is how actions/checkout leaves every CI build, since
+  // the workflow pins `ref` to a sha — reports the branch as the literal
+  // "HEAD", which names nothing. GITHUB_REF_NAME still carries the branch.
   const head = git('rev-parse', '--abbrev-ref', 'HEAD');
   const branch = (head && head !== 'HEAD' ? head : null) || env.GITHUB_REF_NAME || null;
 

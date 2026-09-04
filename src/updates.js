@@ -111,4 +111,44 @@ function shouldReportNoUpdate(trigger) {
   return trigger === 'manual';
 }
 
-module.exports = { policy, availableMessage, shouldReportNoUpdate, INSTALL, NOTIFY, NONE, MAC_SIGNED };
+/**
+ * The release channel a build belongs to, read from its own version.
+ *
+ * `1.0.1-dev.38.a1b2c3d4e5` is on `dev`; `1.0.1` is on stable, which returns
+ * null. The version is the only honest source: it is stamped at build time and
+ * travels with the installed app, so a build cannot be wrong about which
+ * channel it came from.
+ */
+function channelOf(version) {
+  const m = /^\d+\.\d+\.\d+-([0-9A-Za-z-]+)/.exec(String(version || '').trim());
+  return m ? m[1] : null;
+}
+
+/**
+ * Whether this build may consider prereleases — which is what keeps the two
+ * channels apart, in both directions.
+ *
+ * A stable build leaves it false, so electron-updater asks GitHub for
+ * `/releases/latest`, and GitHub excludes prereleases from that by definition.
+ * Stable can therefore never be offered a dev build, without us filtering
+ * anything.
+ *
+ * A dev build sets it true, which switches GitHubProvider to walking the
+ * releases feed. There it compares each release's channel against its own
+ * (taken from `semver.prerelease(currentVersion)[0]`, i.e. `dev`) and takes the
+ * first match. A stable release has no prerelease component, so it matches
+ * neither branch of that check and is skipped — a dev build is never offered
+ * stable either.
+ *
+ * The pairing to keep in step: the build must also publish to the matching
+ * channel, or the update metadata it looks for will not exist. scripts/build.js
+ * passes `--config.publish.channel` for exactly that reason.
+ */
+function allowPrerelease(version) {
+  return channelOf(version) !== null;
+}
+
+module.exports = {
+  policy, availableMessage, shouldReportNoUpdate, channelOf, allowPrerelease,
+  INSTALL, NOTIFY, NONE, MAC_SIGNED,
+};

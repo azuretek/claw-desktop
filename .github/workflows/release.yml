@@ -48,8 +48,12 @@ jobs:
       # Tags are needed to spot a commit that is being released: `git push
       # --follow-tags` raises a branch event and a tag event for the same commit,
       # and only the tag one should build.
+      #
+      # `ref` is pinned for the reason given on the build job's checkout: this
+      # run has one commit, and every job must read the same one.
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
       - id: decide
         run: node scripts/build-version.js
@@ -69,7 +73,21 @@ jobs:
             artifact: windows
     runs-on: ${{ matrix.os }}
     steps:
+      # Pinned to the commit this run was triggered for, not left to resolve a
+      # branch name. Without it each job checks out whatever the tip happens to
+      # be when that job starts, and there are two checkouts here: the version
+      # job derives `X.Y.Z-dev.<count>.<sha>` from its HEAD, and beforePack
+      # stamps src/build-info.json from this one. A push landing between them --
+      # or any workflow_dispatch, which always resolves the branch tip -- makes
+      # those two name different commits, so the installer is named for one
+      # commit and reports another in Settings. That is precisely the question
+      # build-info.json exists to answer.
+      #
+      # Depth stays 1: this job only needs HEAD's sha and dirty state, and the
+      # version is handed to it via CLAW_BUILD_VERSION.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
 
       - uses: actions/setup-node@v4
         with:

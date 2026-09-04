@@ -24,6 +24,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const version = require('./version');
+const updates = require('../src/updates');
 
 const ROOT = path.join(__dirname, '..');
 const PKG = path.join(ROOT, 'package.json');
@@ -101,9 +102,33 @@ function notarizeArgs(env = process.env) {
   return ready ? ['--config.mac.notarize=true'] : [];
 }
 
+/**
+ * Publish to the channel this version belongs to.
+ *
+ * electron-builder names the update metadata after `publish.channel`, defaulting
+ * to `latest` (updateInfoBuilder: `publishConfig.channel || "latest"`). A dev
+ * build has to write `dev-mac.yml` / `dev.yml` instead, for two reasons: a
+ * stable release must not be overwritten by a dev build's metadata, and the
+ * running dev app looks for exactly that filename.
+ *
+ * The channel is read off the version rather than passed in, so it cannot
+ * disagree with what the build is. The same value is baked into app-update.yml,
+ * which is how the installed app knows which channel it follows.
+ */
+function channelArgs(version) {
+  const channel = updates.channelOf(version);
+  return channel ? [`--config.publish.channel=${channel}`] : [];
+}
+
 /** The full argument list handed to electron-builder. */
 function builderArgs(argv, version, env = process.env) {
-  return [...argv, '--publish', 'never', `--config.extraMetadata.version=${version}`, ...notarizeArgs(env)];
+  return [
+    ...argv,
+    '--publish', 'never',
+    `--config.extraMetadata.version=${version}`,
+    ...channelArgs(version),
+    ...notarizeArgs(env),
+  ];
 }
 
 /** The DMGs this build produced, or [] when there are none. */
@@ -210,4 +235,4 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { resolveVersion, builderEntry, builderArgs, notarizeArgs, builtDmgs, stapleDmgs };
+module.exports = { resolveVersion, builderEntry, builderArgs, notarizeArgs, channelArgs, builtDmgs, stapleDmgs };

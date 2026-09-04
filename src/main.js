@@ -929,6 +929,10 @@ function initUpdates() {
   const { autoUpdater } = require('electron-updater');
   updater = autoUpdater;
   updater.autoDownload = plan.autoDownload;
+  // Same channel only: a dev build follows dev releases, a stable build follows
+  // stable ones, and neither is ever offered the other. One flag does both
+  // directions -- see allowPrerelease() in updates.js for why.
+  updater.allowPrerelease = updates.allowPrerelease(app.getVersion());
   // Installing behind the user's back on quit is the wrong default for an app
   // they close to the tray dozens of times a day; the restart is offered.
   updater.autoInstallOnAppQuit = false;
