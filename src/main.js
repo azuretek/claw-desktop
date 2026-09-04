@@ -12,6 +12,7 @@ const buildInfo = require('./build-info');
 const cache = require('./cache');
 const certs = require('./certs');
 const chrome = require('./chrome');
+const menus = require('./menus');
 const overlay = require('./overlay');
 const profile = require('./profile');
 const updates = require('./updates');
@@ -1070,75 +1071,38 @@ async function showAbout() {
   if (response === 2) void shell.openExternal(RELEASES_URL);
 }
 
+/**
+ * Every command the menu bar and the tray can run, defined once.
+ *
+ * One definition per command, so a label or a behaviour cannot differ between
+ * the places it appears — which is half of what keeps the platforms identical.
+ * src/menus.js arranges them; see the note at the top of that file for the
+ * differences the operating systems impose and why nothing of ours hides behind
+ * one.
+ */
+function menuCommands() {
+  return {
+    about: { label: 'About Claw Desktop', click: () => { void showAbout(); } },
+    checkUpdates: { label: 'Check for updates…', click: () => { void checkForUpdates('manual'); } },
+    releaseNotes: { label: 'Release notes', click: () => { void shell.openExternal(RELEASES_URL); } },
+    settings: { label: 'Settings…', click: () => openSettings() },
+    reload: { label: 'Reload', click: () => (showingError ? loadActiveGateway() : page()?.reload()) },
+    reconnect: { label: 'Reconnect to gateway', click: () => loadActiveGateway() },
+    clearCache: { label: 'Clear cache and reload', click: () => { void clearCacheAndReload(); } },
+    quit: { label: 'Quit Claw Desktop', click: () => { quitting = true; app.quit(); } },
+    zoomIn: { label: 'Zoom In', click: () => setZoom(0.5) },
+    zoomOut: { label: 'Zoom Out', click: () => setZoom(-0.5) },
+    actualSize: { label: 'Actual Size', click: () => setZoom(0, 0) },
+    devTools: { label: 'Toggle Developer Tools', click: () => page()?.toggleDevTools() },
+  };
+}
+
 function buildMenu() {
-  const isMac = process.platform === 'darwin';
-  const template = [
-    ...(isMac ? [{
-      label: app.name,
-      submenu: [
-        { label: 'About Claw Desktop', click: () => { void showAbout(); } },
-        { label: 'Check for updates…', click: () => { void checkForUpdates('manual'); } },
-        { type: 'separator' },
-        { label: 'Settings…', accelerator: 'Cmd+,', click: () => openSettings() },
-        { type: 'separator' },
-        { role: 'services' },
-        { type: 'separator' },
-        { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' },
-        { type: 'separator' },
-        { label: 'Quit Claw Desktop', accelerator: 'Cmd+Q', click: () => { quitting = true; app.quit(); } },
-      ],
-    }] : []),
-    {
-      label: 'File',
-      submenu: [
-        // Check for updates is not here on Windows and Linux: it lives in Help,
-        // which is where both platforms put it and where someone looking for it
-        // goes first.
-        ...(isMac ? [] : [{ label: 'Settings…', accelerator: 'Ctrl+,', click: () => openSettings() }]),
-        { label: 'Reload', accelerator: 'CmdOrCtrl+R', click: () => (showingError ? loadActiveGateway() : page()?.reload()) },
-        { label: 'Reconnect to gateway', accelerator: 'CmdOrCtrl+Shift+R', click: () => loadActiveGateway() },
-        { label: 'Clear cache and reload', click: () => { void clearCacheAndReload(); } },
-        { type: 'separator' },
-        isMac ? { role: 'close' } : { label: 'Quit', accelerator: 'Ctrl+Q', click: () => { quitting = true; app.quit(); } },
-      ],
-    },
-    {
-      label: 'Edit',
-      submenu: [
-        { role: 'undo' }, { role: 'redo' }, { type: 'separator' },
-        { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' },
-      ],
-    },
-    {
-      label: 'View',
-      submenu: [
-        { label: 'Zoom In', accelerator: 'CmdOrCtrl+Plus', click: () => setZoom(0.5) },
-        { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', click: () => setZoom(-0.5) },
-        { label: 'Actual Size', accelerator: 'CmdOrCtrl+0', click: () => setZoom(0, 0) },
-        { type: 'separator' },
-        { role: 'togglefullscreen' },
-        { label: 'Toggle Developer Tools', accelerator: isMac ? 'Alt+Cmd+I' : 'Ctrl+Shift+I', click: () => page()?.toggleDevTools() },
-      ],
-    },
-    {
-      label: 'Window',
-      submenu: [{ role: 'minimize' }, { role: 'zoom' }, ...(isMac ? [{ type: 'separator' }, { role: 'front' }] : [])],
-    },
-    {
-      // macOS keeps About and Check for updates in the application menu, where
-      // every Mac app has them, so Help there is the release notes alone.
-      label: 'Help',
-      submenu: [
-        ...(isMac ? [] : [
-          { label: 'About Claw Desktop', click: () => { void showAbout(); } },
-          { label: 'Check for updates…', click: () => { void checkForUpdates('manual'); } },
-          { type: 'separator' },
-        ]),
-        { label: 'Release notes', click: () => { void shell.openExternal(RELEASES_URL); } },
-      ],
-    },
-  ];
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  Menu.setApplicationMenu(Menu.buildFromTemplate(menus.template({
+    platform: process.platform,
+    appName: app.name,
+    commands: menuCommands(),
+  })));
 }
 
 /* ------------------------------------------------------------------ tray */
@@ -1151,6 +1115,9 @@ function buildTray() {
     tray.on('double-click', showMainWindow);
   }
   const cfg = config.get();
+  // The same command objects the menu bar uses, so a label or a behaviour cannot
+  // differ between the two places someone might reach for it.
+  const cmd = menuCommands();
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Open Claw Desktop', click: showMainWindow },
     // Only once there is genuinely something to restart into. A permanently
@@ -1160,11 +1127,10 @@ function buildTray() {
       label: `Restart to update to ${updateReady}`,
       click: () => { quitting = true; updater.quitAndInstall(false, true); },
     }] : []),
-    { label: 'Reconnect', click: () => { showMainWindow(); loadActiveGateway(); } },
-    // Also on the tray, not just the File menu: Windows runs with
-    // `autoHideMenuBar`, so the menu is behind an Alt press exactly when the
-    // window is in the state that makes you want this.
-    { label: 'Clear cache and reload', click: () => { showMainWindow(); void clearCacheAndReload(); } },
+    // The tray copies bring the window forward first. Reloading something
+    // nobody can see is not what anyone means by clicking these from a tray.
+    { ...cmd.reconnect, click: () => { showMainWindow(); loadActiveGateway(); } },
+    { ...cmd.clearCache, click: () => { showMainWindow(); void clearCacheAndReload(); } },
     { type: 'separator' },
     {
       label: 'Gateway',
@@ -1175,14 +1141,14 @@ function buildTray() {
         click: () => switchGateway(g.id),
       })),
     },
-    { label: 'Settings…', click: () => openSettings() },
-    // On the tray as well as the menu bar, for the same reason "Clear cache and
-    // reload" is: Windows hides the menu bar behind Alt, so a build that updates
-    // itself perfectly still looks like one with no updater anywhere in it.
-    { label: 'Check for updates…', click: () => { void checkForUpdates('manual'); } },
-    { label: 'About Claw Desktop', click: () => { void showAbout(); } },
+    cmd.settings,
+    // On the tray as well as the menu bar, because Windows hides the menu bar
+    // behind an Alt press: a build that updates itself perfectly still looks
+    // like one with no updater anywhere in it.
+    cmd.checkUpdates,
+    cmd.about,
     { type: 'separator' },
-    { label: 'Quit', click: () => { quitting = true; app.quit(); } },
+    cmd.quit,
   ]));
 }
 

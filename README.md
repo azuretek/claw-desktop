@@ -169,6 +169,7 @@ older Control UI than the gateway is serving. Three ways out:
   anything loads.
 - **Neither** — **File → Clear cache and reload**, also on the tray menu
   (Windows auto-hides the menu bar behind Alt, exactly when you want this).
+  Every command is in both places, on every platform, for that reason.
 
 All three drop the service worker, its Cache Storage, and the HTTP and
 compiled-code caches — and **never** cookies, localStorage or IndexedDB. That
@@ -214,8 +215,13 @@ release it follows rather than below it.
 ## Updates
 
 The app checks for a new release a minute after launch and every six hours
-after, and on demand from **Check for updates…** on the File (or app) menu.
-What it does with one depends on the platform:
+after, and on demand from **Check for updates…** — in **Help**, on the tray
+menu, and on macOS in the application menu as well. **About Claw Desktop**, in
+those same places, says which channel this build follows, what it does about a
+new version, and when it last looked. Updating is otherwise invisible, which is
+a fair reason to doubt it is happening at all.
+
+What it does with a release depends on the platform:
 
 | Platform | Behaviour | Why |
 |---|---|---|
@@ -340,7 +346,8 @@ beside the release. A manual dispatch is always honoured.
 ## Layout
 
 ```
-src/main.js          app lifecycle, window, tray, menus, navigation guards
+src/main.js          app lifecycle, window, tray, navigation guards
+src/menus.js         the menu bar, identical on every platform (asserted in test)
 src/chrome.js        title strip geometry + theme adopted from the page
 src/cache.js         drops the Control UI's cached copy of itself, never its storage
 src/certs.js         trust-on-first-use certificate pinning
