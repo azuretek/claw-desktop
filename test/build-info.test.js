@@ -164,3 +164,29 @@ test('CI environment variables stand in when git is unavailable', () => {
   });
   assert.ok(info.commit, 'a commit should be resolved from somewhere');
 });
+
+/* ---------------------------------------------------------------- the About box */
+
+test('About carries the build identity, the update line and the runtime', () => {
+  const about = buildInfo.about({
+    version: '1.0.1-dev.40.00aeecf142',
+    info: CLEAN,
+    updateStatus: 'Updates: dev channel, installed automatically; last checked 5 minutes ago, up to date',
+    electron: '44.1.1',
+    chrome: '140.0.0.0',
+    platform: 'win32',
+    arch: 'x64',
+  });
+  assert.equal(about.message, 'Claw Desktop');
+  assert.match(about.detail, /1\.0\.1-dev\.40\.00aeecf142 \(a1b2c3d4e5, built 2026-09-02 08:41Z\)/);
+  assert.match(about.detail, /dev channel/);
+  assert.match(about.detail, /Electron 44\.1\.1, Chromium 140\.0\.0\.0/);
+  // process.platform is what the runtime calls it; About is read by a person.
+  assert.match(about.detail, /Windows x64/);
+  assert.doesNotMatch(about.detail, /win32/);
+});
+
+test('About degrades to the version alone when nothing else is known', () => {
+  const about = buildInfo.about({ version: '1.0.0', info: null });
+  assert.equal(about.detail, '1.0.0 (source build)');
+});

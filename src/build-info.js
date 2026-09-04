@@ -103,4 +103,47 @@ function buildId(info) {
   return stamp.commit && !stamp.dirty ? stamp.commit : null;
 }
 
-module.exports = { SHORT_LENGTH, normalize, read, describe, buildId, formatBuiltAt };
+/**
+ * The platform name a person would use, from process.platform.
+ *
+ * `darwin` and `win32` are what the runtime calls the two platforms and what
+ * nobody else calls them. About is read by whoever is filing the bug report.
+ */
+const PLATFORM_NAMES = { darwin: 'macOS', win32: 'Windows', linux: 'Linux' };
+
+/**
+ * The About dialog's contents.
+ *
+ * Every line is something someone gets asked for when reporting a problem, and
+ * none of it is something they could look up: the version and commit identify
+ * the build exactly, the update line says what this build does about new
+ * versions and when it last looked, and the runtime versions are what a
+ * rendering bug is usually blamed on.
+ *
+ * Formatted here rather than handed to Electron's own `role: 'about'` panel,
+ * which shows a fixed name/version/copyright and has no room for any of it —
+ * nor for the buttons an About box is opened for. See showAbout() in main.js.
+ *
+ * Pure, so the wording is testable without launching Electron, the same split
+ * as describe() above.
+ *
+ * @param {object} opts
+ * @param {string} opts.version
+ * @param {ReturnType<typeof normalize>} opts.info
+ * @param {string} [opts.updateStatus]  one line from updates.statusLine()
+ * @param {string} [opts.electron]
+ * @param {string} [opts.chrome]
+ * @param {string} [opts.platform]
+ * @param {string} [opts.arch]
+ */
+function about({ version, info, updateStatus, electron, chrome, platform, arch }) {
+  const detail = [
+    describe(version, info),
+    ...(updateStatus ? [updateStatus] : []),
+    ...(electron ? [`Electron ${electron}, Chromium ${chrome}`] : []),
+    ...(platform ? [`${PLATFORM_NAMES[platform] || platform} ${arch}`] : []),
+  ].join('\n');
+  return { message: 'Claw Desktop', detail };
+}
+
+module.exports = { SHORT_LENGTH, normalize, read, describe, buildId, formatBuiltAt, about };

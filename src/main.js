@@ -910,6 +910,9 @@ const UPDATE_FIRST_CHECK_MS = 60 * 1000;
 let updater = null; // the electron-updater AppUpdater, or null where we do not check
 let updateReady = null; // version string once downloaded and installable
 let updateTimer = null;
+// The last check to actually finish, for About to report. Updating is otherwise
+// invisible — see updates.statusLine() for why that is worth a line.
+let lastCheck = { at: null, result: null };
 
 function updatePolicy() {
   return updates.policy({ platform: process.platform, packaged: app.isPackaged });
@@ -944,12 +947,14 @@ function initUpdates() {
     // Never a dialog. A machine that is offline, or behind a proxy, or hitting a
     // rate limit must not interrupt whatever the user was doing to say so.
     console.error(`[claw] update check failed: ${err && err.message}`);
+    lastCheck = { at: Date.now(), result: 'check failed' };
     if (pendingManualCheck) {
       pendingManualCheck = false;
       dialog.showMessageBox({ type: 'warning', message: 'Could not check for updates.', detail: String((err && err.message) || err), buttons: ['OK'] });
     }
   });
   updater.on('update-not-available', () => {
+    lastCheck = { at: Date.now(), result: 'up to date' };
     if (!pendingManualCheck) return;
     pendingManualCheck = false;
     dialog.showMessageBox({ type: 'info', message: 'Claw Desktop is up to date.', detail: `You are on ${app.getVersion()}.`, buttons: ['OK'] });
@@ -982,6 +987,7 @@ async function checkForUpdates(trigger = 'manual') {
 
 async function onUpdateAvailable(info, plan) {
   pendingManualCheck = false;
+  lastCheck = { at: Date.now(), result: `${info.version} available` };
   // Windows downloads in the background and speaks once it can actually offer
   // the restart, so there is nothing useful to say yet.
   if (plan.action === updates.INSTALL) return;
@@ -997,6 +1003,7 @@ async function onUpdateAvailable(info, plan) {
 
 async function onUpdateDownloaded(info) {
   updateReady = info.version;
+  lastCheck = { at: Date.now(), result: `${info.version} downloaded, restart to apply` };
   buildTray(); // so "Restart to update" appears without waiting for the dialog
   const { response } = await dialog.showMessageBox({
     type: 'info',
@@ -1014,13 +1021,62 @@ async function onUpdateDownloaded(info) {
   }
 }
 
+/**
+ * The About box.
+ *
+ * Ours rather than Electron's `role: 'about'` panel, for two reasons that both
+ * come down to the panel being a fixed name/version/copyright card: it cannot
+ * show the commit this build came from or say anything about updating, and it
+ * cannot carry a button. The two things people open About to do — find out what
+ * they are running, and make it check for a newer one — are the two things the
+ * native panel cannot do. This is also identical on all three platforms, where
+ * the native panel is a different dialog on each and, on Windows, one that only
+ * appeared in Electron 15.
+ *
+ * Reachable from the menu bar and from the tray. The tray matters more than it
+ * looks: Windows runs with `autoHideMenuBar`, so the menu bar is behind an Alt
+ * press that nobody discovers, which is exactly how a build with a working
+ * "Check for updates…" can still read as having none.
+ */
+async function showAbout() {
+  const plan = updatePolicy();
+  const { message, detail } = buildInfo.about({
+    version: app.getVersion(),
+    info: buildStamp,
+    updateStatus: updates.statusLine({
+      action: plan.action,
+      reason: plan.reason,
+      channel: updates.channelOf(app.getVersion()),
+      checkedAt: lastCheck.at,
+      result: lastCheck.result,
+    }),
+    electron: process.versions.electron,
+    chrome: process.versions.chrome,
+    platform: process.platform,
+    arch: process.arch,
+  });
+
+  const { response } = await dialog.showMessageBox({
+    type: 'info',
+    icon: nativeImage.createFromPath(path.join(ASSETS, 'icon.png')),
+    message,
+    detail,
+    buttons: ['OK', 'Check for updates…', 'Releases'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  });
+  if (response === 1) void checkForUpdates('manual');
+  if (response === 2) void shell.openExternal(RELEASES_URL);
+}
+
 function buildMenu() {
   const isMac = process.platform === 'darwin';
   const template = [
     ...(isMac ? [{
       label: app.name,
       submenu: [
-        { role: 'about' },
+        { label: 'About Claw Desktop', click: () => { void showAbout(); } },
         { label: 'Check for updates…', click: () => { void checkForUpdates('manual'); } },
         { type: 'separator' },
         { label: 'Settings…', accelerator: 'Cmd+,', click: () => openSettings() },
@@ -1035,10 +1091,10 @@ function buildMenu() {
     {
       label: 'File',
       submenu: [
-        ...(isMac ? [] : [
-          { label: 'Settings…', accelerator: 'Ctrl+,', click: () => openSettings() },
-          { label: 'Check for updates…', click: () => { void checkForUpdates('manual'); } },
-        ]),
+        // Check for updates is not here on Windows and Linux: it lives in Help,
+        // which is where both platforms put it and where someone looking for it
+        // goes first.
+        ...(isMac ? [] : [{ label: 'Settings…', accelerator: 'Ctrl+,', click: () => openSettings() }]),
         { label: 'Reload', accelerator: 'CmdOrCtrl+R', click: () => (showingError ? loadActiveGateway() : page()?.reload()) },
         { label: 'Reconnect to gateway', accelerator: 'CmdOrCtrl+Shift+R', click: () => loadActiveGateway() },
         { label: 'Clear cache and reload', click: () => { void clearCacheAndReload(); } },
@@ -1067,6 +1123,19 @@ function buildMenu() {
     {
       label: 'Window',
       submenu: [{ role: 'minimize' }, { role: 'zoom' }, ...(isMac ? [{ type: 'separator' }, { role: 'front' }] : [])],
+    },
+    {
+      // macOS keeps About and Check for updates in the application menu, where
+      // every Mac app has them, so Help there is the release notes alone.
+      label: 'Help',
+      submenu: [
+        ...(isMac ? [] : [
+          { label: 'About Claw Desktop', click: () => { void showAbout(); } },
+          { label: 'Check for updates…', click: () => { void checkForUpdates('manual'); } },
+          { type: 'separator' },
+        ]),
+        { label: 'Release notes', click: () => { void shell.openExternal(RELEASES_URL); } },
+      ],
     },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
@@ -1107,6 +1176,11 @@ function buildTray() {
       })),
     },
     { label: 'Settings…', click: () => openSettings() },
+    // On the tray as well as the menu bar, for the same reason "Clear cache and
+    // reload" is: Windows hides the menu bar behind Alt, so a build that updates
+    // itself perfectly still looks like one with no updater anywhere in it.
+    { label: 'Check for updates…', click: () => { void checkForUpdates('manual'); } },
+    { label: 'About Claw Desktop', click: () => { void showAbout(); } },
     { type: 'separator' },
     { label: 'Quit', click: () => { quitting = true; app.quit(); } },
   ]));

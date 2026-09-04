@@ -117,3 +117,56 @@ test('only a manual check reports that there is nothing to do', () => {
   assert.equal(updates.shouldReportNoUpdate('scheduled'), false);
   assert.equal(updates.shouldReportNoUpdate('startup'), false);
 });
+
+/* ------------------------------------------------------- what About reports */
+
+// Updating succeeds silently, and the only trace it ever ran is a file in a
+// cache directory nobody opens. These assertions are about the app being able
+// to answer "is it actually checking?" without anyone going looking.
+
+test('the status line names the channel, the behaviour and the last check', () => {
+  const line = updates.statusLine({
+    action: updates.INSTALL,
+    reason: 'NSIS updates do not require a signed build',
+    channel: 'dev',
+    checkedAt: 1000,
+    result: 'up to date',
+    now: 1000 + 5 * 60 * 1000,
+  });
+  assert.match(line, /dev channel/);
+  assert.match(line, /installed automatically/);
+  assert.match(line, /last checked 5 minutes ago, up to date/);
+});
+
+test('a build with no prerelease component says stable', () => {
+  const line = updates.statusLine({ action: updates.INSTALL, reason: 'r', channel: null, checkedAt: 0, now: 0 });
+  assert.match(line, /stable channel/);
+});
+
+test('before the first check it says so rather than implying one happened', () => {
+  const line = updates.statusLine({ action: updates.INSTALL, reason: 'r', channel: 'dev' });
+  assert.match(line, /no check yet this run/);
+  assert.doesNotMatch(line, /last checked/);
+});
+
+test('a build that cannot update says why instead of pretending to check', () => {
+  const p = updates.policy({ platform: 'darwin', packaged: false });
+  const line = updates.statusLine({ action: p.action, reason: p.reason });
+  assert.match(line, /not checked/);
+  assert.match(line, /running from source/);
+});
+
+test('a notify-only build does not claim it installs anything', () => {
+  const line = updates.statusLine({ action: updates.NOTIFY, reason: 'unsigned', channel: null, checkedAt: 0, now: 0 });
+  assert.doesNotMatch(line, /installed automatically/);
+  assert.match(line, /by hand/);
+});
+
+test('elapsed time reads in the largest unit that still means something', () => {
+  assert.equal(updates.ago(30 * 1000), 'just now');
+  assert.equal(updates.ago(60 * 1000), '1 minute ago');
+  assert.equal(updates.ago(90 * 60 * 1000), '1 hour ago');
+  assert.equal(updates.ago(50 * 60 * 60 * 1000), '2 days ago');
+  // A clock that moved backwards must not produce "-3 minutes ago".
+  assert.equal(updates.ago(-1), null);
+});

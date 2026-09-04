@@ -148,7 +148,57 @@ function allowPrerelease(version) {
   return channelOf(version) !== null;
 }
 
+/**
+ * Roughly how long ago, in words.
+ *
+ * Deliberately coarse. The question this answers is "is it checking at all",
+ * and a precise timestamp invites the reader to work out the interval instead
+ * of reading the answer.
+ */
+function ago(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return null;
+  const minutes = Math.floor(ms / 60000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+}
+
+/**
+ * The single line About shows about updating.
+ *
+ * It exists because updating is otherwise entirely invisible: it succeeds
+ * silently, and the only proof it ever ran is a file in a cache directory. An
+ * app that quietly keeps itself current and an app whose update check has been
+ * failing for a month look exactly alike from the outside, which is a fair
+ * reason to doubt the first one.
+ *
+ * Three facts, in the order someone doubting it would ask for them: which
+ * releases this build follows, what it does when it finds one, and when it last
+ * looked. Nothing is persisted, so "no check yet" means this run — which is the
+ * truth, and a stored timestamp claiming otherwise would not be.
+ *
+ * @param {object} opts
+ * @param {string} opts.action        from policy()
+ * @param {string} opts.reason        from policy()
+ * @param {string|null} [opts.channel] from channelOf()
+ * @param {number|null} [opts.checkedAt]  Date.now() of the last completed check
+ * @param {string|null} [opts.result]     how that check ended
+ * @param {number} [opts.now]
+ */
+function statusLine({ action, reason, channel = null, checkedAt = null, result = null, now = Date.now() }) {
+  const follows = `${channel || 'stable'} channel`;
+  if (action === NONE) return `Updates: not checked — ${reason}`;
+
+  const behaviour = action === INSTALL ? 'installed automatically' : 'announced, installed by hand';
+  const when = checkedAt === null ? null : ago(now - checkedAt);
+  const last = when ? `last checked ${when}${result ? `, ${result}` : ''}` : 'no check yet this run';
+  return `Updates: ${follows}, ${behaviour}; ${last}`;
+}
+
 module.exports = {
-  policy, availableMessage, shouldReportNoUpdate, channelOf, allowPrerelease,
+  policy, availableMessage, shouldReportNoUpdate, channelOf, allowPrerelease, ago, statusLine,
   INSTALL, NOTIFY, NONE, MAC_SIGNED,
 };
