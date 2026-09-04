@@ -77,9 +77,13 @@ mac:
 # Apple over the network, while Gatekeeper reports "no usable signature" on the
 # file a user downloaded. The chain is sign, notarize, staple, in that order.
 #
-# It cannot be done after the build because electron-builder imports the CI
-# certificate into a temporary keychain and destroys it on finish, so the
-# identity no longer exists by the time scripts/build.js runs.
+# Doing it after the build instead would mean reimplementing identity discovery
+# and the keychain lookup that electron-builder already does here, to sign a file
+# it just produced. (It used to be flatly impossible: with CSC_LINK,
+# electron-builder built a temporary keychain and destroyed it on finish, so no
+# identity survived the build. CI now owns the keychain — see the release
+# workflow — so the certificate outlives the build; the duplication is the reason
+# that stands.)
 #
 # electron-builder's own note calls DMG signing unnecessary and warns it causes
 # errors "in combination with notarization requirements". That holds for signing

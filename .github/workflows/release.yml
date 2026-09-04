@@ -7,11 +7,17 @@ name: Claw Desktop release
 # Three ways in, and they mean different things:
 #
 #   push to main       a dev build of whatever just landed, versioned
-#                      `X.Y.Z-dev.<sha>`. Artifacts only, never published.
+#                      `X.Y.Z-dev.<count>.<sha>`, published as a GitHub
+#                      PRE-release on the `dev` update channel.
 #   tag `v*`           a release. The tag must equal package.json — checked
 #                      before anything is built — and the installers are
-#                      published to a GitHub Release.
+#                      published as a full GitHub Release on `latest`.
 #   workflow_dispatch  a dev build of any ref, on demand.
+#
+# Both kinds publish, because a GitHub Release is the only way to hand someone a
+# raw `.dmg` or `.exe`: workflow artifacts are always zipped by GitHub and that
+# is not configurable. The two are kept apart by channel, not by trust — see the
+# `prerelease` input below and `channelOf()` in src/updates.js.
 #
 # `paths-ignore` skips docs-only pushes. It is safe to combine with the tag
 # filter: GitHub does not evaluate path filters for tag pushes, so a release can
@@ -115,6 +121,23 @@ jobs:
       #
       # notarytool takes a key *file*, not a key value, so the .p8 is written to
       # the runner's temp directory, which is destroyed with the job.
+      #
+      # The signing keychain is built HERE rather than left to electron-builder,
+      # and CSC_LINK is deliberately not exported. Given CSC_LINK, macPackager
+      # calls macCodeSign.createKeychain, which makes a temporary keychain with a
+      # random password of its own and then runs `security set-key-partition-list`
+      # against it — and that intermittently fails with "SecKeychainUnlock: The
+      # user name or passphrase you entered is not correct". Its own password, on
+      # its own keychain, rejected at random: the same commit with the same
+      # secrets passed on a rerun. Given CSC_KEYCHAIN and no CSC_LINK it takes the
+      # other branch (`{ keychainFile: process.env.CSC_KEYCHAIN }`) and creates no
+      # keychain at all, so the flake has nowhere to happen.
+      #
+      # That branch also skips electron-builder's bundled root_certs keychain,
+      # which is where the Apple intermediates would have come from — so the G2
+      # intermediate is imported here too. Without it codesign fails "unable to
+      # build chain to self-signed root", and note that `security verify-cert`
+      # passes anyway, so only a real signing attempt proves this one.
       - name: Apple signing credentials
         if: matrix.artifact == 'macos'
         env:
@@ -124,17 +147,70 @@ jobs:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: |
+          set -eo pipefail
+
           if [ -n "$APPLE_API_KEY_P8" ]; then
             key="$RUNNER_TEMP/AuthKey.p8"
             printf '%s' "$APPLE_API_KEY_P8" > "$key"
             chmod 600 "$key"
             echo "APPLE_API_KEY=$key" >> "$GITHUB_ENV"
           fi
-          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY_ID APPLE_API_ISSUER; do
+          for name in APPLE_API_KEY_ID APPLE_API_ISSUER; do
             eval "value=\$$name"
-            [ -n "$value" ] && echo "$name=$value" >> "$GITHUB_ENV"
+            if [ -n "$value" ]; then echo "$name=$value" >> "$GITHUB_ENV"; fi
           done
-          echo "signing credentials present: $([ -n "$CSC_LINK" ] && echo yes || echo no)"
+
+          # A fork with no secrets builds unsigned rather than failing — the same
+          # rule the mac block in electron-builder.yml follows.
+          if [ -z "$CSC_LINK" ]; then
+            echo "no signing certificate configured; this build will be unsigned"
+            exit 0
+          fi
+
+          kc="$RUNNER_TEMP/claw-signing.keychain-db"
+          p12="$RUNNER_TEMP/signing.p12"
+          printf '%s' "$CSC_LINK" | base64 --decode > "$p12"
+          chmod 600 "$p12"
+
+          curl -fsS --retry 3 -o "$RUNNER_TEMP/DeveloperIDG2CA.cer" \
+            https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+
+          # Both passwords reach `security` on stdin, never in argv, so neither
+          # can be read out of `ps` by anything else on the runner. `security -i`
+          # takes one command per line.
+          kcpw="$(openssl rand -base64 24)"
+          security -i <<SEC
+          create-keychain -p "$kcpw" "$kc"
+          set-keychain-settings "$kc"
+          unlock-keychain -p "$kcpw" "$kc"
+          import "$RUNNER_TEMP/DeveloperIDG2CA.cer" -k "$kc" -T /usr/bin/codesign
+          import "$p12" -k "$kc" -P "$CSC_KEY_PASSWORD" -T /usr/bin/codesign -T /usr/bin/productbuild
+          set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$kcpw" "$kc"
+          SEC
+          rm -f "$p12"
+
+          # "filename will not be searched to resolve the signing identity's
+          # certificate chain unless it is also on the user's keychain search
+          # list" — and `list-keychains -s` REPLACES that list, so the existing
+          # entries are read back and passed through rather than dropped.
+          existing=()
+          while IFS= read -r line; do
+            line=$(printf '%s' "$line" | sed 's/^[[:space:]]*"//; s/"[[:space:]]*$//')
+            if [ -n "$line" ]; then existing+=("$line"); fi
+          done < <(security list-keychains -d user)
+          security list-keychains -d user -s "$kc" "${existing[@]}"
+
+          # The whole point of owning the keychain: signing readiness becomes a
+          # checked precondition instead of something discovered three minutes
+          # later as a warning in a build that still exits 0.
+          if ! security find-identity -v -p codesigning "$kc" | grep -q 'Developer ID Application'; then
+            echo "::error::no Developer ID Application identity in the signing keychain"
+            security find-identity -v "$kc" || true
+            exit 1
+          fi
+
+          echo "CSC_KEYCHAIN=$kc" >> "$GITHUB_ENV"
+          echo "signing identity ready in $kc"
 
       # scripts/build.js owns "what version is this build" for local builds and
       # CI alike. CLAW_BUILD_VERSION is the override it honours, so the version
@@ -152,10 +228,12 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: claw-desktop-${{ matrix.artifact }}-${{ needs.version.outputs.version }}
-          # Dev builds land on every push to main, so they expire quickly. A
-          # release's artifacts are also attached to the GitHub Release, which
-          # is permanent, so these are only a convenience.
-          retention-days: ${{ needs.version.outputs.tagged == 'true' && 30 || 7 }}
+          # Every build now publishes a Release, so these exist only to carry
+          # files from the two build runners to the release job below — the
+          # Release is the durable copy. They expire as fast as GitHub allows.
+          # Retention here is age-only: GitHub offers no count-based limit for
+          # artifacts, unlike the releases, which the prune step keeps to 10.
+          retention-days: 1
           path: |
             dist/*.dmg
             dist/*.zip
@@ -163,15 +241,20 @@ jobs:
             # Update metadata, emitted because electron-builder.yml declares a
             # `publish` provider. An updater reads these to learn a release's
             # version, size and checksum; without them the release is just files.
-            # `latest*` specifically, not `*.yml` — the build also drops
-            # builder-debug.yml in dist/, which has no business in a release.
+            #
+            # Both channels are named explicitly, not `*.yml`: a stable build
+            # writes latest-mac.yml / latest.yml and a dev build writes
+            # dev-mac.yml / dev.yml, while the build also drops builder-debug.yml
+            # in dist/, which has no business in a release.
             dist/latest*.yml
+            dist/dev*.yml
             dist/*.blockmap
 
   release:
     needs: [version, build]
-    # Must track the tag filter above; dev builds are never published.
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Everything that built gets published; `prerelease` is what separates a dev
+    # build from a release, not whether it is published at all.
+    if: needs.version.outputs.build == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -182,8 +265,50 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
+          # electron-updater resolves a release through its TAG, not through the
+          # release title: GitHubProvider walks the releases feed, skips any tag
+          # that fails `semver.valid`, and reads the channel from
+          # `semver.prerelease(tag)[0]`. So the tag has to be `v<version>` — a
+          # `dev-<version>` tag would be skipped by every updater, silently.
+          #
+          # For a dev build no such tag exists yet; the API creates it at
+          # target_commitish. That cannot start a second run: GitHub raises no
+          # workflow event for anything pushed with GITHUB_TOKEN. It does leave a
+          # tag on the commit, which build-version.js is careful not to mistake
+          # for a release tag.
+          tag_name: v${{ needs.version.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          # GitHub never marks a prerelease as "Latest", so the front page keeps
+          # pointing at the newest stable release on its own.
+          prerelease: ${{ needs.version.outputs.tagged != 'true' }}
           files: artifacts/**/*
           generate_release_notes: true
           # A release that publishes with no installers attached looks finished
           # and is useless; fail loudly instead.
           fail_on_unmatched_files: true
+
+      # A prerelease per merge accumulates fast, and each carries four installers,
+      # so this keeps the newest 10 and deletes the rest along with their tags.
+      #
+      # The filter is deliberately narrow — prerelease AND a `-dev.` identifier in
+      # the tag — because this deletes published releases: a stable release, or a
+      # hand-made prerelease that is not one of ours, must never be reachable by
+      # it. The run that just published is the newest, so it is always kept.
+      - name: Prune old dev releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eo pipefail
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 200 \
+            --json tagName,isPrerelease,createdAt \
+            --jq '[.[] | select(.isPrerelease and (.tagName | test("-dev\\.")))]
+                  | sort_by(.createdAt) | reverse | .[10:] | .[].tagName' > stale.txt
+
+          pruned=0
+          while IFS= read -r tag; do
+            if [ -z "$tag" ]; then continue; fi
+            echo "deleting $tag"
+            gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+            pruned=$((pruned + 1))
+          done < stale.txt
+          echo "pruned $pruned dev release(s); newest 10 kept"

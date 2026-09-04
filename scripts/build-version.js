@@ -68,7 +68,17 @@ function decide({ ref, sha, packageVersion, eventName = 'push', headTags = [], c
   //
   // The tag run is the one that matters, so the branch run stands down. A manual
   // dispatch is always honoured: someone asked for it explicitly.
-  const releaseTag = headTags.map((t) => version.versionFromTag(t)).find(Boolean);
+  //
+  // Only a STABLE tag counts. Every dev build now publishes a prerelease, and a
+  // GitHub release needs a tag, so `v1.0.1-dev.39.a1b2c3d4e5` ends up pointing
+  // at the commit it was built from. That tag names no release and can start no
+  // build — GitHub raises no workflow event for anything pushed with
+  // GITHUB_TOKEN — so treating it as one would stand down every rerun and
+  // dispatch of a commit that has already had a dev build, claiming a tag build
+  // will publish it when nothing will.
+  const releaseTag = headTags
+    .map((t) => version.versionFromTag(t))
+    .find((v) => v && !version.parse(v).prerelease);
   if (eventName !== 'workflow_dispatch' && releaseTag) {
     return { ...result, build: false, note: `commit is tagged v${releaseTag}; its tag build publishes it` };
   }

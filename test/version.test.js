@@ -393,6 +393,18 @@ test('the branch half of a release push stands down', () => {
   assert.match(r.note, /tag build publishes it/);
 });
 
+test('a dev release tag on the commit does not stop the dev build', () => {
+  // Every dev build publishes a prerelease, and a GitHub release needs a tag, so
+  // the previous dev build of this commit left `v1.0.1-dev.39.…` pointing at it.
+  // That tag publishes nothing and can start nothing, so standing down for it
+  // would silently refuse to rebuild any commit that has already had a dev build.
+  const r = buildVersion.decide({
+    ref: 'refs/heads/main', sha: SHA, packageVersion: '1.0.0',
+    headTags: ['v1.0.1-dev.39.a1b2c3d4e5'], count: 39,
+  });
+  assert.equal(r.build, true);
+});
+
 test('a non-version tag on the commit does not stop the dev build', () => {
   // Only a release tag means "something else is publishing this".
   const r = buildVersion.decide({
