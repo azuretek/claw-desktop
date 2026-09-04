@@ -105,11 +105,25 @@ win:
       arch: [x64, arm64]
   # Default is "${productName} Setup ${version}.exe". Spaces make the file painful
   # to script against — notably over the Windows node exec, which splits argv
-  # without honouring quotes. ${arch} also stops electron-builder folding both
-  # architectures into a single 215 MB installer; per-arch files are ~half that.
+  # without honouring quotes.
   artifactName: ClawDesktop-Setup-${version}-${arch}.${ext}
 
 nsis:
+  # Without this every release carried THREE installers: one per architecture,
+  # plus a 216 MB universal one holding both. `${arch}` in artifactName does not
+  # prevent that, which is what the comment here used to claim — read
+  # NsisTarget.finishBuild and it is the opposite. With a universal installer
+  # wanted (the default), a pattern containing `${arch}` makes electron-builder
+  # build the per-arch installers *in addition to* it.
+  #
+  # Nothing ever downloaded the universal one. electron-updater's findFile picks
+  # the file whose name contains process.arch, so it was ~2 GB of dead weight
+  # across the ten dev releases we retain, and a third similar filename on the
+  # release page for a human to pick wrong.
+  #
+  # false takes the other branch entirely: NsisTarget.build() emits each
+  # architecture's installer as it packages it, and finishBuild only cleans up.
+  buildUniversalInstaller: false
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
