@@ -364,6 +364,7 @@ beside the release. A manual dispatch is always honoured.
 src/main.js          app lifecycle, window, tray, navigation guards
 src/menus.js         the menu bar, identical on every platform (asserted in test)
 src/chrome.js        title strip geometry + theme adopted from the page
+src/autostart.js     launch at login on Linux, which Electron does not implement
 src/cache.js         drops the Control UI's cached copy of itself, never its storage
 src/certs.js         trust-on-first-use certificate pinning
 src/secrets.js       per-gateway token/password/headers, safeStorage-encrypted

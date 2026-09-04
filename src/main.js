@@ -7,6 +7,7 @@ const {
 const path = require('node:path');
 const fs = require('node:fs');
 const https = require('node:https');
+const autostart = require('./autostart');
 const config = require('./config');
 const buildInfo = require('./build-info');
 const cache = require('./cache');
@@ -1175,6 +1176,16 @@ function registerShortcut() {
 
 function applyLaunchAtLogin() {
   const { launchAtLogin, startHidden } = config.get();
+
+  // Linux takes a different route to the same setting. app.setLoginItemSettings
+  // is `@platform darwin,win32`; on Linux it neither works nor throws, so the
+  // checkbox would stay ticked and nothing would ever launch. autostart.js
+  // writes the XDG entry every desktop environment reads instead.
+  if (process.platform === 'linux') {
+    const r = autostart.apply({ enabled: launchAtLogin, hidden: startHidden });
+    return r.ok ? { ok: true } : { ok: false, error: r.error };
+  }
+
   // Only touch the login item when something needs to change. An unpackaged dev
   // run has no registerable app bundle, so calling this unconditionally makes
   // macOS log "Unable to set login item: Operation not permitted" on every start.
