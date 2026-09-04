@@ -248,6 +248,14 @@ Automatic checks are silent unless there is something to act on; a manual check
 always answers, including "you are up to date". A failed check — offline, proxy,
 rate limit — is logged and never interrupts you.
 
+That silence is the reason for
+[scripts/test-appimage-update.sh](scripts/test-appimage-update.sh): an app that
+quietly keeps itself current and one whose update check has been broken for a
+month look exactly alike from outside. It runs a released AppImage under Xvfb on
+any headless Linux box, lets it find the newer release, accepts the restart
+prompt, and passes only if the file on disk ends up hashing to the published
+artifact. `v1.0.1-dev.44` → `dev.45` was verified that way.
+
 `MAC_SIGNED` in [src/updates.js](src/updates.js) is what tells macOS it may
 install. It is compiled in, so it has to track what the release workflow really
 produces: if signing is ever removed, that constant goes back to `false` in the
