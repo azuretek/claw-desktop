@@ -29,8 +29,16 @@
 // and the answer only changes when the build pipeline changes -- which is a
 // commit, not a runtime event.
 //
-// Signing is configured in electron-builder.yml (`mac.identity`, `notarize`).
-// When that is real, set this true and macOS gets the same flow as Windows.
+// Signing is credential-driven rather than configured: electron-builder.yml
+// carries no `identity` key on purpose, and notarization is switched on per-run
+// by scripts/build.js when the App Store Connect variables are present.
+//
+// This constant describes the builds people install, which come from CI. A
+// Developer ID now exists on the signing machine, so a local `npm run build:mac`
+// is signed and notarized -- but CI has no certificate yet, and this flag is
+// compiled in. Setting it true before CI can sign would tell an unsigned release
+// build to hand itself to Squirrel.Mac, which is the exact failure the flag
+// exists to avoid. Flip it in the same commit that gives CI a certificate.
 const MAC_SIGNED = false;
 
 /** What to do when a newer version exists. */

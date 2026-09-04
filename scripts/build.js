@@ -82,9 +82,26 @@ function builderEntry() {
   return require.resolve('electron-builder/cli.js');
 }
 
+/**
+ * Whether to notarize this run.
+ *
+ * Notarization is a credential, not a config choice — the same rule the mac
+ * block in electron-builder.yml already follows for signing. `notarize` stays
+ * false there so a build with no Apple credentials still succeeds, which is CI
+ * today and any checkout that is not the signing machine; when the App Store
+ * Connect variables are all present, turn it on for that run.
+ *
+ * All three or none: app-builder-lib throws InvalidConfigurationError when only
+ * some are set, so a half-configured environment must not reach it.
+ */
+function notarizeArgs(env = process.env) {
+  const ready = Boolean(env.APPLE_API_KEY && env.APPLE_API_KEY_ID && env.APPLE_API_ISSUER);
+  return ready ? ['--config.mac.notarize=true'] : [];
+}
+
 /** The full argument list handed to electron-builder. */
-function builderArgs(argv, version) {
-  return [...argv, '--publish', 'never', `--config.extraMetadata.version=${version}`];
+function builderArgs(argv, version, env = process.env) {
+  return [...argv, '--publish', 'never', `--config.extraMetadata.version=${version}`, ...notarizeArgs(env)];
 }
 
 function main(argv) {
@@ -115,4 +132,4 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { resolveVersion, builderEntry, builderArgs };
+module.exports = { resolveVersion, builderEntry, builderArgs, notarizeArgs };

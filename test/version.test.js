@@ -160,15 +160,45 @@ test('electron-builder is launched as a script, not as a command on PATH', () =>
   assert.ok(require('node:fs').existsSync(entry), `${entry} does not exist`);
 });
 
+// An explicit env on every call: these assert an exact argument list, and
+// notarization adds to it, so reading the ambient process.env would make them
+// pass or fail depending on whose shell ran them.
 test('every build refuses to publish and carries its version', () => {
-  const args = build.builderArgs(['--mac'], '1.2.3-dev.abc');
+  const args = build.builderArgs(['--mac'], '1.2.3-dev.abc', {});
   assert.deepEqual(args, ['--mac', '--publish', 'never', '--config.extraMetadata.version=1.2.3-dev.abc']);
 });
 
 test('caller flags come first, so they cannot be overridden by ours', () => {
-  const args = build.builderArgs(['--win', '--x64'], '1.0.0');
+  const args = build.builderArgs(['--win', '--x64'], '1.0.0', {});
   assert.deepEqual(args.slice(0, 2), ['--win', '--x64']);
   assert.ok(args.includes('--publish') && args[args.indexOf('--publish') + 1] === 'never');
+});
+
+/* -------------------------------------------------------------- notarizeArgs */
+
+const ASC = {
+  APPLE_API_KEY: '/tmp/AuthKey.p8',
+  APPLE_API_KEY_ID: 'GFUPBM2MG7',
+  APPLE_API_ISSUER: '701a18c6-1987-41b2-8edf-fe0d3e263d44',
+};
+
+test('no Apple credentials means no notarization, so the build still succeeds', () => {
+  assert.deepEqual(build.notarizeArgs({}), []);
+});
+
+test('a complete App Store Connect environment turns notarization on', () => {
+  assert.deepEqual(build.notarizeArgs(ASC), ['--config.mac.notarize=true']);
+  assert.ok(build.builderArgs(['--mac'], '1.0.0', ASC).includes('--config.mac.notarize=true'));
+});
+
+// app-builder-lib throws InvalidConfigurationError when only some are set, so a
+// partial environment must read as "not configured" rather than reaching it.
+test('a partial App Store Connect environment does not enable notarization', () => {
+  for (const key of Object.keys(ASC)) {
+    const partial = { ...ASC };
+    delete partial[key];
+    assert.deepEqual(build.notarizeArgs(partial), [], `missing ${key} should not notarize`);
+  }
 });
 
 /* ------------------------------------------------------------------ checkTag */

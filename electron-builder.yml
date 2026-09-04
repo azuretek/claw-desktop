@@ -37,19 +37,23 @@ publish:
 # electron-builder behaviour applies: sign if an identity is discoverable, warn
 # and continue unsigned if not.
 #
-#   unsigned (today)  no Developer ID in the keychain -> "skipped macOS code
-#                     signing". CI additionally sets CSC_IDENTITY_AUTO_DISCOVERY
-#                     false so a runner can never pick up a stray identity.
+#   unsigned          no Developer ID in the keychain -> "skipped macOS code
+#                     signing". This is CI today, which additionally sets
+#                     CSC_IDENTITY_AUTO_DISCOVERY false so a runner can never
+#                     pick up a stray identity, and any checkout that is not the
+#                     signing machine.
 #   signed            a "Developer ID Application" certificate in the keychain,
-#                     or CSC_LINK + CSC_KEY_PASSWORD in CI. Then set
-#                     `notarize: true` here and provide APPLE_ID,
-#                     APPLE_APP_SPECIFIC_PASSWORD and APPLE_TEAM_ID.
+#                     or CSC_LINK + CSC_KEY_PASSWORD in CI.
 #
-# Notarization stays off until then: it is an upload to Apple that fails without
-# a Developer ID, so enabling it early only breaks the build.
+# `notarize` stays false here for the same reason there is no `identity`. It is
+# an upload to Apple that fails outright without credentials, so hard-enabling it
+# would break every build that has none. scripts/build.js passes
+# `--config.mac.notarize=true` for a single run when APPLE_API_KEY,
+# APPLE_API_KEY_ID and APPLE_API_ISSUER are all set — an App Store Connect *Team*
+# key, since Apple's own docs say individual keys cannot use notarytool.
 #
-# Until signed, macOS quarantines the downloaded .dmg — see README for the fix,
-# and src/updates.js for why macOS cannot auto-update without this.
+# While a build is unsigned, macOS quarantines the downloaded .dmg — see README
+# for the fix, and src/updates.js for why macOS cannot auto-update without this.
 mac:
   category: public.app-category.productivity
   icon: build/icon.png
