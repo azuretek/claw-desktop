@@ -92,10 +92,10 @@ The setup window opens on first launch.
 **Which address to use.** Prefer the tailnet name
 (`https://<host>.<tailnet>.ts.net`, no port) — Tailscale Serve terminates a real
 certificate and it simply works. A `:18789` address talks to the gateway's own
-listener, which is self-signed, so the first connection is **refused**, and the
-error page sends you to **Settings → Certificates**, where the fingerprint is
-waiting to be trusted. Trusting pins **that exact fingerprint for that host
-alone** and reconnects.
+listener, which is self-signed, so the first connection is **refused** — and a
+refused connection puts Settings back on screen with the certificate waiting at
+the top of it. Trusting it pins **that exact fingerprint for that host alone**
+and reconnects.
 
 There is no prompt, deliberately. A yes/no box in front of someone waiting for
 their app to open gets answered by whichever button makes it go away — the same
@@ -179,6 +179,35 @@ window background and the app's own pages follow whichever Control UI theme is
 active, light or dark. The mode is remembered, so a cold start opens in the
 right palette instead of flashing the wrong one. Both mechanisms are documented
 at length in [src/chrome.js](src/chrome.js).
+
+## When something goes wrong
+
+**A connection failure puts Settings back on screen**, rather than a dedicated
+error page. That page's entire content was one sentence and two buttons, one of
+which said *Change gateway…* — so everything you would go looking for after a
+failed connect was one click further on, here. Now the heading says why you are
+looking at it and the gateway that failed is marked in its own row, beside the
+address, the credentials and any certificate waiting to be trusted.
+
+Every gateway row carries its own status: **Connected**, **Connecting…**,
+**Cannot connect** with the reason in words and Chromium's error string beside
+it, or **Certificate not trusted**. The badge used to read "Connected" for
+whichever gateway was merely *selected*, which was wrong for exactly as long as
+a connection was failing.
+
+**Everything else slides down from the top and stays until it is fixed.**
+Credentials that cannot be stored on this machine, a global shortcut the OS
+refused, an update that would not download. None of them is a question, so none
+of them is a dialog: a dialog interrupts, gets dismissed, and the condition is
+still true afterwards with nothing on screen to say so. A notice is keyed by
+condition rather than by occurrence, so raising it twice does not stack it, and
+whatever raised it clears it when it passes.
+
+The banner lives in a view sized to exactly the height the page reports, because
+an Electron view swallows every mouse event inside its bounds no matter what is
+drawn there — an over-tall banner would be an invisible strip eating clicks on
+the Control UI underneath. [scripts/test-banner.js](scripts/test-banner.js)
+raises a real condition and asserts those two numbers agree.
 
 ## Recovering a stale UI
 
@@ -413,7 +442,9 @@ src/build-info.js    reads the packed-in commit; formats the Settings build line
 src/profile.js       one-time profile move for the OpenClaw -> Claw Desktop rename
 src/defaults.js      suggested gateways and defaults  ← edit for a new machine
 src/preload.js       narrow IPC bridge, exposed to local pages only
-src/ui/              the app's own pages: settings, about, message, error
+src/connection.js    what each gateway row says: phase, error, certificate
+src/notices.js       the banner's store: conditions that stay until they resolve
+src/ui/              the app's own pages: settings, about, message, banner
 scripts/build-info.js    stamps the commit in at pack time (beforePack hook)
 scripts/version.js       CI build versioning + tag/package.json agreement
 scripts/build-version.js decides the version a CI build carries
@@ -421,6 +452,7 @@ scripts/build.js         runs a build under the version the tree deserves
 scripts/make-icons.mjs   regenerates the icon PNGs from the SVG artwork
 scripts/dump-menu.js     dumps the resolved menu bar, to diff across platforms
 scripts/dump-overlays.js opens each of the app's own dialogs and checks it rendered
+scripts/test-banner.js   raises a real condition and checks the banner's geometry
 scripts/test-cert-trust.js runs the refuse -> Settings -> trust -> connected loop for real
 ```
 

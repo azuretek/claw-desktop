@@ -105,28 +105,34 @@ function check(name, ok, detail) {
   else { console.error(`FAIL ${name}: ${detail}`); failed = true; }
 }
 
+// A hard stop. Without it, anything that throws inside the run below becomes an
+// unhandled rejection: app.exit() is never reached, and the harness sits there
+// with a window open until someone kills it by hand.
+const WATCHDOG_MS = 120000;
+setTimeout(() => {
+  console.error(`FAIL harness: still running after ${WATCHDOG_MS / 1000}s`);
+  app.exit(1);
+}, WATCHDOG_MS).unref();
+
 app.whenReady().then(async () => {
   await new Promise((r) => server.listen(PORT, '127.0.0.1', r));
   await delay(6000);
 
-  /* 1. The connection is refused, and the app says so in its own page. */
-  const errorText = await textOf('error.html', 'error page');
-  check('the handshake is refused and the error page explains it',
-    /certificate/i.test(errorText) && /Review certificate in Settings/.test(errorText),
-    errorText.slice(0, 300));
-  check('the error page shows the fingerprint it refused',
-    /sha256\//.test(errorText), errorText.slice(0, 300));
-
-  /* 2. The decision is waiting in Settings, with nothing blocked on it. */
-  menuItem('Settings…').click();
-  await delay(1500);
-  const settingsText = await textOf('settings.html', 'settings');
-  check('Settings carries the refused certificate',
-    settingsText.includes(HOST) && /Trust this certificate/.test(settingsText),
+  /* 1. The connection is refused, and the app puts Settings back on screen
+        with the failure in it -- there is no separate error page any more. */
+  const settingsText = await textOf('settings.html', 'settings after the refusal');
+  check('a failed connection lands on Settings, saying why it is there',
+    /Cannot reach the gateway/.test(settingsText), settingsText.slice(0, 300));
+  check('Settings carries the refused certificate and its fingerprint',
+    settingsText.includes(HOST) && /Trust this certificate/.test(settingsText) && /sha256\//.test(settingsText),
     settingsText.slice(0, 400));
   check('it is worded as routine rather than as an attack',
-    /cannot verify/i.test(settingsText) && !/CHANGED/.test(settingsText),
+    /cannot verify/i.test(settingsText) && !/has CHANGED/.test(settingsText),
     settingsText.slice(0, 400));
+  // Case-insensitive: ui.css text-transforms the badge, and innerText reports
+  // what is rendered rather than what is in the markup.
+  check('the gateway row itself reports the problem',
+    /certificate not trusted/i.test(settingsText), settingsText.slice(0, 600));
 
   /* 3. Trusting it there fixes the thing that was broken. */
   const settings = contentsFor('settings.html');
@@ -146,7 +152,10 @@ app.whenReady().then(async () => {
   const body = reached ? await reached.executeJavaScript('document.body.innerText') : '';
   check('the gateway loads after trusting it', /PRETEND GATEWAY REACHED/.test(body), `showing: ${body.slice(0, 120)}`);
 
-  const offerNow = await settings.executeJavaScript('window.clawDesktop.getState().then((s) => s.certOffers.length)');
+  // Read from the store rather than from the page: by now the settings page has
+  // been replaced by the gateway it just connected to, and a remote page gets
+  // no bridge at all — deliberately, since it is a website.
+  const offerNow = require('../src/certs').pendingOffers().length;
   check('the offer is gone once it has been decided', offerNow === 0, `${offerNow} still pending`);
 
   /* 4. The hostile case. Same host, same pin, different certificate — which is
@@ -165,7 +174,7 @@ app.whenReady().then(async () => {
   await new Promise((r) => impostor.listen(PORT, '127.0.0.1', r));
 
   menuItem('Reconnect to gateway').click();
-  await delay(4000);
+  await delay(5000);
 
   const changedText = await textOf('settings.html', 'settings after the certificate changed');
   check('a changed certificate is called out as changed',
@@ -185,4 +194,9 @@ app.whenReady().then(async () => {
   impostor.close();
   fs.rmSync(TMP, { recursive: true, force: true });
   app.exit(failed ? 1 : 0);
+}).catch((err) => {
+  console.error(`FAIL harness: ${err && err.stack ? err.stack : err}`);
+  try { server.close(); } catch { /* already closed */ }
+  fs.rmSync(TMP, { recursive: true, force: true });
+  app.exit(1);
 });

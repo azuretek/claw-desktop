@@ -94,6 +94,13 @@
 
 * { box-sizing: border-box; }
 
+/* The `hidden` attribute is only a UA-stylesheet `display: none`, so any author
+   rule that sets `display` beats it — which is how the close button stayed on
+   screen on a page that has nothing to close back to, despite being marked
+   hidden. Everything here that hides itself does so through this attribute, so
+   the override belongs once, at the top. */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   height: 100%;
@@ -142,9 +149,10 @@ html, body {
   background: var(--scrim);
 }
 
-/* First run: this page is the window's whole content, so there is nothing
-   behind to show through and a translucent wash would just look like a bug. */
-body.first-run .scrim { background: var(--bg); }
+/* When this page is the window's whole content — a first run, or a connection
+   that failed — there is nothing behind to show through, and a translucent wash
+   would just look like a bug. */
+body.as-page .scrim { background: var(--bg); }
 
 .modal {
   position: relative;
@@ -161,7 +169,7 @@ body.first-run .scrim { background: var(--bg); }
 }
 
 /* Borderless and shadowless when it is the window rather than a dialog in it. */
-body.first-run .modal { border-color: transparent; box-shadow: none; }
+body.as-page .modal { border-color: transparent; box-shadow: none; }
 
 /* About and the message dialog. Settings is a working surface with lists in it;
    these two are a paragraph and some buttons, and at 720px a short sentence
@@ -232,6 +240,68 @@ a  { color: var(--accent); }
   font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
   color: var(--ok); border: 1px solid var(--ok); border-radius: var(--radius-full); padding: 2px 8px; white-space: nowrap;
 }
+/* One tone per connection state, so the row is readable at a glance and a
+   failing gateway cannot look like a connected one. */
+.badge--ok    { color: var(--ok);          border-color: var(--ok); }
+.badge--warn  { color: var(--warn);        border-color: var(--warn); }
+.badge--err   { color: var(--destructive); border-color: var(--destructive); }
+.badge--muted { color: var(--muted);       border-color: var(--border-strong); }
+
+/* --------------------------------------------------------------- banner */
+
+/* The page inside the banner view. It is sized to exactly the stack's height by
+   main, so the body must add nothing of its own — a stray margin here becomes a
+   transparent strip that eats clicks on the UI underneath. */
+body.banner-body { background: transparent; overflow: hidden; }
+.banner-stack { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; }
+
+.banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 11px 14px;
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--muted);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--shadow-lg);
+  /* The slide, as a keyframe animation rather than a class toggled on the next
+     frame. `transform` and `opacity` only, so layout height is final on the
+     first frame and the view is never resized mid-animation.
+
+     The reason it is not a transition: a transition needs a start state and a
+     second frame to animate away from, and the frame never arrives if the view
+     has not painted yet -- which is exactly the state a brand new banner view
+     is in. That left the card parked above the viewport, permanently invisible,
+     in a view that was still eating clicks. An animation with `both` fill runs
+     from its own keyframes and, if it never runs at all, leaves the element at
+     its ordinary un-transformed position. Visible is the failure mode. */
+  animation: banner-in .22s cubic-bezier(.2, .8, .3, 1) both;
+}
+@keyframes banner-in {
+  from { transform: translateY(-140%); opacity: 0; }
+  to   { transform: none; opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .banner { animation: none; }
+}
+
+.banner--error { border-left-color: var(--destructive); }
+.banner--warn  { border-left-color: var(--warn); }
+.banner--info  { border-left-color: var(--accent); }
+
+.banner__message { font-weight: 600; color: var(--text-strong); }
+.banner__detail  { color: var(--muted); font-size: 12px; }
+
+.banner__close {
+  flex: none;
+  width: 24px; height: 24px; padding: 0;
+  display: grid; place-items: center;
+  font-size: 11px; line-height: 1;
+  background: transparent; border: 1px solid transparent;
+  border-radius: var(--radius-sm); color: var(--muted); cursor: pointer;
+}
+.banner__close:hover { background: var(--bg-hover); color: var(--text-strong); }
 
 /* ----------------------------------------------------------------- inputs */
 
@@ -309,18 +379,6 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 22px 0 0; }
    stays in the DOM regardless — the error page never sets this class and still
    needs somewhere to grab the window by. */
 body:not(.frameless) .scrim { padding-top: 24px; }
-
-/* ------------------------------------------------------------- error page */
-
-.center { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; text-align: center; padding: 0 40px; }
-.center img { width: 76px; height: 76px; opacity: .9; margin-bottom: 18px; }
-.center h1 { font-size: 19px; }
-.center .detail { max-width: 480px; }
-.code { color: var(--muted); font-size: 11.5px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin-top: 22px; }
-/* Unchanged from before the modal work: the error page still lays itself out
-   against the body, and the scrim is `position: fixed` so this cannot reach it. */
-body.frameless { padding-top: 62px; }
-body.frameless .center { height: calc(100% - 62px); }
 
 /* --------------------------------------------------------------- title strip */
 

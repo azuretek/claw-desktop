@@ -74,6 +74,19 @@ test('nothing uses the built-in About panel', () => {
   }
 });
 
+test('every page in src/ui is loadable and locked down', () => {
+  // Covers the banner too, which is not an overlay but is still one of the
+  // app's own pages, and fails the same two ways: no script, or an inline one
+  // its own CSP then blocks.
+  const pages = fs.readdirSync(UI).filter((f) => f.endsWith('.html'));
+  assert.ok(pages.length >= 4, `only found ${pages.length} pages`);
+  for (const file of pages) {
+    const html = fs.readFileSync(path.join(UI, file), 'utf8');
+    assert.match(html, /Content-Security-Policy/, `ui/${file} has no CSP`);
+    assert.doesNotMatch(html, /<script>/, `ui/${file} has an inline script its CSP blocks`);
+  }
+});
+
 test('every overlay page main.js can open exists on disk', () => {
   // main.js maps a name to a filename, and a typo there is a modal that opens
   // as a blank sheet over the whole window until the watchdog tears it down.

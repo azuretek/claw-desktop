@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:;">
+  <title>Claw Desktop notices</title>
+  <link rel="stylesheet" href="ui.css">
+</head>
+<body class="banner-body">
+  <!-- Conditions that stay true until something fixes them, over the top of
+       whatever the window is showing. Not a dialog: none of these is a question,
+       and a dialog would be dismissed while the condition carried on being true
+       with nothing on screen to say so.
+
+       This page lives in a view sized to exactly the height it reports, because
+       a view swallows every mouse event inside its bounds no matter what is
+       drawn there — an over-tall banner would be an invisible strip eating
+       clicks on the UI underneath. See refreshBanner in src/main.js. -->
+  <div class="banner-stack" id="stack"></div>
+  <script src="banner.js"></script>
+</body>
+</html>

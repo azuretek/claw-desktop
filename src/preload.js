@@ -27,7 +27,6 @@ if (isLocalPage) {
     forgetCert: (host) => ipcRenderer.invoke('app:forget-cert', host),
     connect: (id) => ipcRenderer.invoke('app:connect', id),
     saveSettings: (patch) => ipcRenderer.invoke('app:save-settings', patch),
-    retry: () => ipcRenderer.invoke('app:retry'),
     openSettings: () => ipcRenderer.invoke('app:open-settings'),
     closeSettings: () => ipcRenderer.invoke('app:close-settings'),
 
@@ -42,6 +41,13 @@ if (isLocalPage) {
     // the bridge is supposed to be the only door to.
     onAboutChanged: (fn) => ipcRenderer.on('app:about-changed', () => fn()),
     onStateChanged: (fn) => ipcRenderer.on('app:state-changed', () => fn()),
+
+    /* The banner: conditions that stay until they are fixed. `bannerHeight` is
+       the page telling main how tall to make its view — see ui/banner.js. */
+    notices: () => ipcRenderer.invoke('app:notices'),
+    bannerHeight: (height) => ipcRenderer.invoke('app:banner-height', height),
+    dismissNotice: (id) => ipcRenderer.invoke('app:dismiss-notice', id),
+    onNoticesChanged: (fn) => ipcRenderer.on('app:notices-changed', () => fn()),
     message: () => ipcRenderer.invoke('app:message'),
     respondToMessage: (index) => ipcRenderer.invoke('app:message-respond', index),
   });

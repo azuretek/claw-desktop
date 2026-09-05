@@ -3,6 +3,11 @@
 const api = window.clawDesktop;
 const params = new URLSearchParams(location.search);
 const firstRun = params.has('firstRun');
+// This page is the window's own content rather than a dialog over it: a first
+// run, or a connection that failed and left nothing behind to go back to.
+// Separate from firstRun, which used to imply it — a failed connection shows
+// the preferences, a first run hides them.
+const asPage = params.has('page');
 const $ = (id) => document.getElementById(id);
 
 // Applied before first paint, from the URL rather than from getState(), because
@@ -10,6 +15,7 @@ const $ = (id) => document.getElementById(id);
 // itself. Fetched over IPC they land after the first frame and the card jumps.
 // (This script is the last element in <body>, so document.body exists.)
 if (params.has('frameless')) document.body.classList.add('frameless');
+if (asPage) document.body.classList.add('as-page');
 if (firstRun) document.body.classList.add('first-run');
 
 let state = null;
@@ -191,6 +197,12 @@ function renderGateways() {
       creds.headers.length ? `${creds.headers.length} header${creds.headers.length > 1 ? 's' : ''}` : null,
     ].filter(Boolean);
 
+    // What this gateway is doing, and why it is not doing it. The badge used to
+    // say "Connected" for whichever gateway was *selected*, which was a lie for
+    // the entire time a connection was failing — the state in which someone is
+    // most likely to be reading it.
+    const status = gw.status || { tone: 'muted', label: 'Not connected', detail: null };
+
     const row = el('div', { className: 'row' }, [
       el('div', { className: 'stack grow' }, [
         el('span', { className: 'name', textContent: gw.label || gw.url }),
@@ -199,8 +211,9 @@ function renderGateways() {
           className: 'muted-sm',
           textContent: supplies.length ? `Signs in with: ${supplies.join(', ')}` : 'No saved credentials — you will be asked to sign in.',
         }),
+        status.detail ? el('span', { className: `result ${status.tone}`, textContent: status.detail }) : null,
       ]),
-      active ? el('span', { className: 'badge', textContent: 'Connected' }) : null,
+      el('span', { className: `badge badge--${status.tone}`, textContent: status.label }),
       el('button', {
         className: active ? 'ghost' : 'primary',
         textContent: active ? 'Reconnect' : 'Connect',
@@ -350,7 +363,24 @@ function renderAbout() {
     `Claw Desktop ${state.build} · Electron ${state.versions.electron} · Chromium ${state.versions.chrome} · ${state.configPath}`;
 }
 
+/** The subtitle carries the reason this page is on screen, when there is one. */
+function renderHeading() {
+  if (firstRun) return;
+  // The phase, not the badge: a refused certificate shows as a *warning* on the
+  // row, because it is routine on a self-signed listener — but the connection
+  // failed all the same, and that is why this page is in front of you.
+  const failed = state.connection && state.connection.phase === 'failed';
+  if (asPage && failed) {
+    $('title').textContent = 'Cannot reach the gateway';
+    $('subtitle').textContent = 'Claw Desktop came back here so you can fix it. The gateway that failed is marked below.';
+  } else {
+    $('title').textContent = 'Settings';
+    $('subtitle').textContent = 'Choose which gateway this app connects to.';
+  }
+}
+
 function render() {
+  renderHeading();
   renderGateways();
   renderAbout();
   if (!firstRun) { renderCertOffers(); renderCerts(); renderPrefs(); }
@@ -416,10 +446,11 @@ $('save').addEventListener('click', async () => {
 
 /* ----------------------------------------------------------------- dismiss */
 
-// Only dismissable as a modal. On a first run this page IS the window — there
-// is nothing behind it to go back to, and an Escape key that emptied the window
-// would leave the app running with a blank frame and no way to pick a gateway.
-if (!firstRun) {
+// Only dismissable as a modal. When this page IS the window — a first run, or a
+// connection that failed — there is nothing behind it to go back to, and an
+// Escape key that emptied the window would leave the app running with a blank
+// frame and no way to pick a gateway.
+if (!asPage) {
   const dismiss = () => api.closeSettings();
   $('close').addEventListener('click', dismiss);
   // Only a click that both starts and ends on the scrim counts. Without the
@@ -451,10 +482,11 @@ api.onStateChanged(async () => {
   if (firstRun) {
     $('title').textContent = 'Connect to a gateway';
     $('subtitle').textContent = 'Pick the OpenClaw gateway this app should open, or add your own.';
-    $('prefs').hidden = true;
-    $('close').hidden = true;
-  } else {
-    $('prefs').hidden = false;
   }
+  // Preferences are hidden only on a first run, where there is nothing to
+  // prefer yet. A failed connection shows the whole page: the setting that
+  // needs changing to fix it could be any of them.
+  $('prefs').hidden = firstRun;
+  $('close').hidden = asPage;
   render();
 })();

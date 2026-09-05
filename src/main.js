@@ -18,7 +18,9 @@ const buildInfo = require('./build-info');
 const cache = require('./cache');
 const certs = require('./certs');
 const chrome = require('./chrome');
+const connectionState = require('./connection');
 const menus = require('./menus');
+const noticeStore = require('./notices');
 const overlay = require('./overlay');
 const profile = require('./profile');
 const updates = require('./updates');
@@ -66,7 +68,6 @@ let stripView = null;
 let settingsIsPage = false;
 let tray = null;
 let quitting = false;
-let showingError = false;
 let saveTimer = null;
 // Inserted-stylesheet keys, per WebContents id, so a theme change can replace
 // the sheet it wrote rather than stacking a second one on top.
@@ -116,6 +117,9 @@ function layoutViews() {
   const top = chrome.contentInset().top;
   if (stripView) stripView.setBounds({ x: 0, y: 0, width, height: top });
   if (pageView) pageView.setBounds({ x: 0, y: top, width, height: Math.max(0, height - top) });
+  // Exactly as tall as the banner page says it needs, and no taller: the view
+  // eats every click inside its bounds regardless of what is drawn there.
+  if (bannerView) bannerView.setBounds({ x: 0, y: top, width, height: Math.min(bannerHeight, Math.max(0, height - top)) });
   // A modal covers everything including the strip: the scrim is meant to dim
   // the whole window, and each overlay page carries its own drag band.
   for (const view of overlayViews.values()) view.setBounds({ x: 0, y: 0, width, height });
@@ -237,20 +241,57 @@ function applyHeaders(ses) {
   });
 }
 
-/* ------------------------------------------------------------------- errors */
+/* --------------------------------------------------------------- connection */
 
-function showError(detail) {
+// Which gateway this app is pointed at and how that is going. One gateway at a
+// time, because only one is ever loaded.
+let connection = { gatewayId: null, phase: connectionState.IDLE, error: null };
+
+function setConnection(patch) {
+  connection = { ...connection, ...patch };
+  notifyStateChanged();
+}
+
+/**
+ * Show Settings as the window's own content rather than as a modal over it.
+ *
+ * Two situations need this, and they are not the same: a first run, where there
+ * is no gateway to lay a modal over, and a failed connection, where there is a
+ * gateway but nothing of it on screen.
+ *
+ * @param {{firstRun?: boolean}} [opts]
+ */
+function showSettingsAsPage(opts = {}) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  showingError = true;
-  settingsIsPage = false;
-  const gw = config.activeGateway();
-  const params = new URLSearchParams({
-    code: String(detail.errorCode ?? ''),
-    description: detail.errorDescription || 'The gateway could not be reached.',
-    url: detail.url || (gw ? gw.url : ''),
-    label: gw ? gw.label : '',
+  settingsIsPage = true;
+  // A modal of the same page over the top of itself is not an improvement.
+  closeOverlay('settings');
+  page()?.loadFile(path.join(UI_DIR, 'settings.html'), {
+    search: overlaySearch({ firstRun: opts.firstRun, page: true }),
   });
-  page()?.loadFile(path.join(UI_DIR, 'error.html'), { search: `?${params}` });
+}
+
+/**
+ * A connection failed, so put Settings back on screen with the failure in it.
+ *
+ * This replaced a dedicated error page whose entire content was one sentence
+ * and two buttons, one of which said "Change gateway…". Everything someone
+ * would go looking for after a failed connect — the address, whether a token is
+ * saved, a certificate waiting to be trusted, the other gateways they could
+ * switch to — was one click further on, on this page. So this is that page,
+ * with the failure shown against the gateway it happened to.
+ */
+function showConnectionFailure(detail) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const gw = config.activeGateway();
+  console.warn(`[claw] cannot reach ${gw ? gw.label || gw.url : 'the gateway'}: ${detail.errorCode} ${detail.errorDescription}`);
+  connection = {
+    gatewayId: gw ? gw.id : null,
+    phase: connectionState.FAILED,
+    error: { code: detail.errorCode, description: detail.errorDescription || '' },
+  };
+  showSettingsAsPage();
+  notifyStateChanged();
 }
 
 /* -------------------------------------------------------------- main window */
@@ -282,15 +323,13 @@ function loadActiveGateway() {
     // the only thing that makes the window paintable at all on a first run:
     // `ready-to-show` never fires for a window that was never asked to load
     // anything, so without this the app would sit in the tray, invisible.
-    showingError = false;
-    settingsIsPage = true;
-    closeSettings();
-    page()?.loadFile(path.join(UI_DIR, 'settings.html'), { search: overlaySearch({ firstRun: true }) });
+    setConnection({ gatewayId: null, phase: connectionState.IDLE, error: null });
+    showSettingsAsPage({ firstRun: true });
     return null;
   }
-  showingError = false;
   settingsIsPage = false;
   autofilled = false;
+  setConnection({ gatewayId: gw.id, phase: connectionState.CONNECTING, error: null });
   const creds = secrets.load(gw.id);
   const supplied = [creds.token && 'token', creds.password && 'password', creds.headers.length && `${creds.headers.length} header(s)`]
     .filter(Boolean).join(', ');
@@ -647,24 +686,29 @@ function createMainWindow() {
 
   wc.on('did-finish-load', () => {
     wc.setZoomLevel(config.get().zoomLevel || 0);
-    // Our own pages (first-run settings, the error page) want the Control UI's
+    // Our own pages (settings as the window's content) want the Control UI's
     // design tokens. The gateway's page gets nothing injected at all.
     if (wc.getURL().startsWith('file://')) {
       applyThemeCss(wc);
       return;
+    }
+    // The gateway answered -- if it really did. Chromium commits an error
+    // document for a failed main frame and that fires this too, so the phase
+    // decides; see shouldMarkConnected in src/connection.js.
+    if (connectionState.shouldMarkConnected({ phase: connection.phase, url: wc.getURL() })) {
+      setConnection({ phase: connectionState.CONNECTED, error: null });
     }
     maybeAutofill(wc);
     void maybeRefreshForNewBuild(wc);
   });
 
   wc.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL, isMainFrame) => {
-    // -3 is ERR_ABORTED, which fires on ordinary in-app navigation.
-    if (!isMainFrame || errorCode === -3) return;
-    showError({ errorCode, errorDescription, url: validatedURL });
+    if (!connectionState.isRealFailure({ code: errorCode, isMainFrame })) return;
+    showConnectionFailure({ errorCode, errorDescription, url: validatedURL });
   });
 
   wc.on('render-process-gone', (_e, details) => {
-    showError({ errorCode: details.reason, errorDescription: `The window stopped responding (${details.reason}).` });
+    showConnectionFailure({ errorCode: details.reason, errorDescription: `The window stopped responding (${details.reason}).` });
   });
 
   // Every event that changes the content size has to re-lay the views out — the
@@ -692,6 +736,8 @@ function createMainWindow() {
   mainWindow.on('closed', () => {
     pageView = null;
     stripView = null;
+    bannerView = null;
+    bannerHeight = 0;
     overlayViews.clear();
     // Nothing left to answer with, so an in-flight message dialog cancels.
     settleMessage(null);
@@ -716,6 +762,11 @@ function createMainWindow() {
   }
 
   loadActiveGateway();
+  // Anything raised before there was a window to put it in -- the shortcut and
+  // the credential store are both checked during startup, well before this --
+  // would otherwise sit in the store with nothing on screen. Also covers the
+  // window being recreated after it was closed for good on macOS.
+  refreshBanner();
   return mainWindow;
 }
 
@@ -803,6 +854,10 @@ const overlayViews = new Map();
 function overlaySearch(opts = {}) {
   const params = new URLSearchParams();
   if (opts.firstRun) params.set('firstRun', '1');
+  // Settings is the window's own content rather than a dialog in it. Separate
+  // from firstRun, which used to imply it: a failed connection also puts it
+  // there, but with the preferences shown rather than hidden.
+  if (opts.page || opts.firstRun) params.set('page', '1');
   if (chrome.enabled()) params.set('frameless', '1');
   return `?${params}`;
 }
@@ -894,6 +949,68 @@ function closeSettings() {
   closeOverlay('settings');
 }
 
+/* ------------------------------------------------------------------ banner */
+
+// Conditions that are true until something fixes them: credentials that cannot
+// be stored, a shortcut the OS refused, an update that would not download. None
+// is a question, so none is a dialog.
+const notices = noticeStore.create();
+
+// A view rather than part of a page, because it has to sit over the *gateway's*
+// page and this app injects nothing into that. Its own WebContents for the same
+// reason every other page of ours is one.
+let bannerView = null;
+// What the page says it needs, in CSS pixels. The view is resized to exactly
+// this: a view swallows every mouse event inside its bounds no matter what the
+// page draws there, so an over-tall banner is an invisible strip that eats
+// clicks on the UI underneath. Zero means gone.
+let bannerHeight = 0;
+
+function refreshBanner() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (!notices.size()) {
+    if (bannerView) {
+      try { mainWindow.contentView.removeChildView(bannerView); } catch { /* window gone */ }
+      try { if (!bannerView.webContents.isDestroyed()) bannerView.webContents.close(); } catch { /* gone */ }
+      themeCssKeys.delete(bannerView.webContents.id);
+      bannerView = null;
+      bannerHeight = 0;
+    }
+    return;
+  }
+
+  if (!bannerView) {
+    // Provisional, and immediately corrected by the page. A view with no height
+    // never paints, and a view that never paints cannot run the script that
+    // would tell us how tall to make it.
+    bannerHeight = 72;
+    bannerView = new WebContentsView({
+      webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false, sandbox: true },
+    });
+    bannerView.setBackgroundColor('#00000000');
+    const wc = bannerView.webContents;
+    attachContextMenu(wc);
+    mainWindow.contentView.addChildView(bannerView);
+    // Added before any overlay that is already open would be re-added, so a
+    // modal still covers it. Overlays are re-stacked below for that reason.
+    for (const view of overlayViews.values()) mainWindow.contentView.addChildView(view);
+    wc.loadFile(path.join(UI_DIR, 'banner.html'), { search: overlaySearch() });
+    wc.once('did-finish-load', () => applyThemeCss(wc));
+    layoutViews();
+    return;
+  }
+
+  if (!bannerView.webContents.isDestroyed()) bannerView.webContents.send('app:notices-changed');
+}
+
+function setNotice(id, notice) {
+  if (notices.set(id, notice)) refreshBanner();
+}
+
+function clearNotice(id) {
+  if (notices.clear(id)) refreshBanner();
+}
+
 /* ------------------------------------------------------------ message modal */
 
 // Anything that used to be dialog.showMessageBox(). Same shape in and out — a
@@ -982,7 +1099,8 @@ function refreshThemedPages() {
     applyThemeCss(stripView.webContents);
     stripView.setBackgroundColor(currentTheme.surface);
   }
-  if ((settingsIsPage || showingError) && mainWindow && !mainWindow.isDestroyed()) {
+  if (bannerView && !bannerView.webContents.isDestroyed()) applyThemeCss(bannerView.webContents);
+  if (settingsIsPage && mainWindow && !mainWindow.isDestroyed()) {
     applyThemeCss(page());
   }
 }
@@ -1157,12 +1275,17 @@ async function onUpdateAvailable(info) {
     await updater.downloadUpdate();
   } catch (err) {
     setLastCheck('download failed');
-    void showMessage({ kind: 'warning', message: 'Could not download the update.', detail: String((err && err.message) || err), buttons: ['OK'] });
+    setNotice('update-download', {
+      tone: noticeStore.WARN,
+      message: `Could not download Claw Desktop ${info.version}.`,
+      detail: `${noticeStore.sentence((err && err.message) || err)} It will try again at the next check.`,
+    });
   }
 }
 
 async function onUpdateDownloaded(info) {
   updateReady = info.version;
+  clearNotice('update-download');
   setLastCheck(`${info.version} downloaded, restart to apply`);
   buildTray(); // so "Restart to update" appears without waiting for the dialog
   const { response } = await showMessage({
@@ -1241,7 +1364,7 @@ function notifyStateChanged() {
   for (const view of overlayViews.values()) {
     if (!view.webContents.isDestroyed()) view.webContents.send('app:state-changed');
   }
-  if ((settingsIsPage || showingError) && page()) page().send('app:state-changed');
+  if (settingsIsPage && page()) page().send('app:state-changed');
 }
 
 /**
@@ -1272,7 +1395,7 @@ function menuCommands() {
     checkUpdates: { label: 'Check for updates…', click: () => { void checkForUpdates('manual'); } },
     releaseNotes: { label: 'Release notes', click: () => { void shell.openExternal(RELEASES_URL); } },
     settings: { label: 'Settings…', click: () => openSettings() },
-    reload: { label: 'Reload', click: () => (showingError ? loadActiveGateway() : page()?.reload()) },
+    reload: { label: 'Reload', click: () => (settingsIsPage ? loadActiveGateway() : page()?.reload()) },
     reconnect: { label: 'Reconnect to gateway', click: () => loadActiveGateway() },
     clearCache: { label: 'Clear cache and reload', click: () => { void clearCacheAndReload(); } },
     quit: { label: 'Quit Claw Desktop', click: () => { quitting = true; app.quit(); } },
@@ -1349,6 +1472,22 @@ function switchGateway(id) {
 
 function registerShortcut() {
   globalShortcut.unregisterAll();
+  const result = attemptShortcut();
+  // An ongoing condition rather than an event: the shortcut stays dead until
+  // the accelerator is changed or whatever owns it lets go. Saving Settings
+  // runs this again, so a fixed one clears itself.
+  if (result.ok) clearNotice('shortcut');
+  else {
+    setNotice('shortcut', {
+      tone: noticeStore.WARN,
+      message: 'The global shortcut is not active.',
+      detail: `${config.get().globalShortcut} could not be registered. ${noticeStore.sentence(result.error)} Change it in Settings.`,
+    });
+  }
+  return result;
+}
+
+function attemptShortcut() {
   const accel = config.get().globalShortcut;
   if (!accel) return { ok: true };
   try {
@@ -1357,6 +1496,26 @@ function registerShortcut() {
   } catch (err) {
     return { ok: false, error: err.message };
   }
+}
+
+/**
+ * Apply the login-item setting and put a failure on the banner.
+ *
+ * Worth a banner rather than a line in a log because it fails *silently and
+ * later*: the checkbox stays ticked, and the only symptom is the app not being
+ * there after the next reboot -- by which time nothing connects the two.
+ */
+function reportLaunchAtLogin() {
+  const result = applyLaunchAtLogin();
+  if (result.ok) clearNotice('login-item');
+  else {
+    setNotice('login-item', {
+      tone: noticeStore.WARN,
+      message: 'Claw Desktop will not open at login.',
+      detail: `${noticeStore.sentence(result.error)} The setting is saved, but the system refused it.`,
+    });
+  }
+  return result;
 }
 
 function applyLaunchAtLogin() {
@@ -1440,11 +1599,33 @@ function testGateway(rawUrl) {
 
 /* -------------------------------------------------------------------- IPC */
 
+/** The host a gateway's URL points at, for matching a certificate offer to it. */
+function gatewayHost(url) {
+  try {
+    return new URL(url).host;
+  } catch {
+    return null;
+  }
+}
+
 function currentState() {
   const cfg = config.get();
+  const offers = certs.pendingOffers();
   return {
-    // Each gateway carries only whether a credential is set, never its value.
-    gateways: cfg.gateways.map((g) => ({ ...g, credentials: secrets.summary(g.id) })),
+    // Each gateway carries only whether a credential is set, never its value --
+    // plus how its own connection is going, so the row that failed is the row
+    // that says so. Formatted here because the page is sandboxed and cannot
+    // require src/connection.js.
+    gateways: cfg.gateways.map((g) => ({
+      ...g,
+      credentials: secrets.summary(g.id),
+      status: connectionState.status({
+        isActive: g.id === cfg.activeGatewayId,
+        phase: g.id === connection.gatewayId ? connection.phase : connectionState.IDLE,
+        error: g.id === connection.gatewayId ? connection.error : null,
+        certOffer: offers.find((o) => o.host === gatewayHost(g.url)) || null,
+      }),
+    })),
     activeGatewayId: cfg.activeGatewayId,
     secretsAvailable: secrets.available(),
     frameless: chrome.enabled(),
@@ -1466,7 +1647,11 @@ function currentState() {
     trustedCerts: cfg.trustedCerts,
     // Certificates refused this session and waiting for a decision. This is
     // where the prompt went: Settings shows them, the error page points here.
-    certOffers: certs.pendingOffers(),
+    certOffers: offers,
+    // The phase itself, not just the per-gateway badge. Settings uses it to
+    // decide whether it is on screen because something failed -- which a
+    // certificate warning would not tell it, since that is a warn, not an err.
+    connection: { gatewayId: connection.gatewayId, phase: connection.phase, error: connection.error },
     platform: process.platform,
     // Pre-formatted rather than sent as parts: the settings page is sandboxed
     // and cannot require src/build-info.js, so formatting it there would mean a
@@ -1547,14 +1732,13 @@ function registerIpc() {
   ipcMain.handle('app:save-settings', (_e, patch) => {
     config.update(patch);
     const shortcut = registerShortcut();
-    const login = applyLaunchAtLogin();
+    const login = reportLaunchAtLogin();
     // Takes effect now rather than on the next launch: a preference that needs
     // a restart to mean anything is one the user cannot tell they have set.
     applyUpdatePreference();
     buildTray();
     return { ...currentState(), shortcut, login };
   });
-  ipcMain.handle('app:retry', () => { loadActiveGateway(); });
   ipcMain.handle('app:open-settings', () => { openSettings(); });
   ipcMain.handle('app:close-settings', () => { closeSettings(); });
 
@@ -1565,6 +1749,17 @@ function registerIpc() {
   ipcMain.handle('app:about', () => aboutState());
   ipcMain.handle('app:check-updates', () => { void checkForUpdates('manual'); });
   ipcMain.handle('app:open-releases', () => shell.openExternal(RELEASES_URL));
+  // The banner. It reports the height it needs rather than being given one: the
+  // view swallows clicks over its whole rect, so main cannot guess at it.
+  ipcMain.handle('app:notices', () => notices.list());
+  ipcMain.handle('app:banner-height', (_e, height) => {
+    const next = Math.max(0, Math.min(400, Math.ceil(Number(height) || 0)));
+    if (next === bannerHeight) return;
+    bannerHeight = next;
+    layoutViews();
+  });
+  ipcMain.handle('app:dismiss-notice', (_e, id) => { clearNotice(String(id)); });
+
   ipcMain.handle('app:message', () => (currentMessage ? currentMessage.spec : null));
   ipcMain.handle('app:message-respond', (_e, index) => {
     settleMessage(Number.isInteger(index) ? index : null);
@@ -1616,11 +1811,20 @@ if (!app.requestSingleInstanceLock()) {
       },
     });
 
-    if (!secrets.available()) console.warn(`[claw] ${secrets.unavailableReason()}`);
+    if (!secrets.available()) {
+      console.warn(`[claw] ${secrets.unavailableReason()}`);
+      // True for the whole run and the reason saving a token appears to do
+      // nothing, so it belongs on screen rather than in a log nobody reads.
+      setNotice('secrets', {
+        tone: noticeStore.WARN,
+        message: 'Gateway credentials cannot be saved on this machine.',
+        detail: noticeStore.sentence(secrets.unavailableReason()),
+      });
+    }
     registerIpc();
     buildMenu();
     buildTray();
-    applyLaunchAtLogin();
+    reportLaunchAtLogin();
 
     const shortcut = registerShortcut();
     if (!shortcut.ok) console.warn(`[claw] global shortcut not registered: ${shortcut.error}`);
