@@ -12,6 +12,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const { readFileSync } = require('node:fs');
+const path = require('node:path');
 
 const notices = require('../src/notices');
 
@@ -131,4 +133,23 @@ test('a changed action counts as a change, even when the words do not move', () 
   assert.equal(n.set('connection', { ...base, action: { label: 'Open Settings', command: 'reconnect' } }), true);
   // And dropping the offer entirely.
   assert.equal(n.set('connection', base), true);
+});
+
+test('every notice id is a literal, so the banner has a ceiling', () => {
+  // The bound is one notice per condition, and the store enforces it by id. What
+  // nothing enforces is that the ids are countable: an id built from a variable,
+  // `cert-${host}` say, would raise a fresh banner per host and stack without
+  // limit. Nothing would fail, the banner would just grow. So this reads the
+  // call sites rather than the store, because the store cannot see the
+  // difference.
+  const main = readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+  const ids = [...main.matchAll(/(?<!function )setNotice\(\s*([^,]+),/g)].map((m) => m[1].trim());
+
+  assert.ok(ids.length >= 7, `expected every call site, found ${ids.length}`);
+  for (const id of ids) {
+    assert.ok(
+      /^'[a-z][a-z-]*'$/.test(id) || /^[A-Z][A-Z_]*$/.test(id),
+      `notice id is not a literal, so the banner is unbounded: ${id}`,
+    );
+  }
 });
