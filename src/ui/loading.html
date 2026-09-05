@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: file:;">
+  <title>Connecting…</title>
+  <link rel="stylesheet" href="ui.css">
+</head>
+<body class="loading-body">
+  <!-- What the window shows while it has no gateway page to show: during a
+       connect, and afterwards if that connect failed.
+
+       It is a cover in its own view rather than a page loaded into the gateway
+       view, and the reason is what a failure does to that view. Chromium
+       commits its own error document there, and loading over the top of it
+       would be a second navigation racing the first. Here the gateway page
+       loads, or fails, underneath and untouched — and when it succeeds this
+       whole view goes away with nothing to unwind.
+
+       The failure text is not here. It slides down from the top as a notice,
+       with the link to Settings, because a failure is a condition rather than a
+       place: it should not take the screen away from someone who did not ask to
+       leave it. See failureNotice() in src/connection.js. -->
+  <div class="dragbar"></div>
+  <main class="loading" id="root">
+    <div class="loading__mark">
+      <img class="loading__logo" src="../assets/claw.svg" alt="">
+      <span class="loading__ring" aria-hidden="true"></span>
+    </div>
+    <h1 class="loading__title" id="title">Connecting…</h1>
+    <p class="loading__label" id="label"></p>
+    <p class="loading__url mono" id="url"></p>
+    <button class="ghost loading__retry" id="retry" type="button" hidden>Try again</button>
+  </main>
+  <script src="loading.js"></script>
+</body>
+</html>

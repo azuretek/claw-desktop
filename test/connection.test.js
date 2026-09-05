@@ -114,3 +114,31 @@ test('one of the app’s own pages never means a gateway answered', () => {
     false,
   );
 });
+
+/* ------------------------------------------------------ the failure banner */
+
+test('the banner names the gateway and offers exactly one way out', () => {
+  const n = connection.failureNotice({ label: 'minizilla', error: { code: -105, description: 'ERR_NAME_NOT_RESOLVED' } });
+  assert.equal(n.tone, 'error');
+  assert.match(n.message, /minizilla/);
+  assert.match(n.detail, /Tailscale/);
+  // Chromium's string survives beside the sentence: it is what someone pastes
+  // into a search box when the friendly hint does not fit their case.
+  assert.match(n.detail, /ERR_NAME_NOT_RESOLVED/);
+  assert.equal(n.action.command, 'settings');
+});
+
+test('the banner and the gateway row describe one failure the same way', () => {
+  // Two wordings of the same failure would drift the first time either moved.
+  const error = { code: -102, description: 'ERR_CONNECTION_REFUSED' };
+  const row = connection.status({ isActive: true, phase: connection.FAILED, error });
+  assert.equal(connection.failureNotice({ label: 'gw', error }).detail, row.detail);
+});
+
+test('a failure with no gateway and no error still reads as a sentence', () => {
+  // render-process-gone arrives with neither, and a banner saying
+  // "Cannot connect to undefined" is worse than the failure it reports.
+  const n = connection.failureNotice({});
+  assert.equal(n.message, 'Cannot connect to the gateway');
+  assert.equal(n.detail, 'The gateway did not respond.');
+});

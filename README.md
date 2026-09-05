@@ -102,9 +102,9 @@ The setup window opens on first launch.
 (`https://<host>.<tailnet>.ts.net`, no port) — Tailscale Serve terminates a real
 certificate and it simply works. A `:18789` address talks to the gateway's own
 listener, which is self-signed, so the first connection is **refused** — and a
-refused connection puts Settings back on screen with the certificate waiting at
-the top of it. Trusting it pins **that exact fingerprint for that host alone**
-and reconnects.
+refused connection raises a notice with a link to Settings, where the
+certificate is waiting at the top. Trusting it pins **that exact fingerprint for
+that host alone** and reconnects.
 
 There is no prompt, deliberately. A yes/no box in front of someone waiting for
 their app to open gets answered by whichever button makes it go away — the same
@@ -191,14 +191,25 @@ at length in [src/chrome.js](src/chrome.js).
 
 ## When something goes wrong
 
-**A connection failure puts Settings back on screen**, rather than a dedicated
-error page. That page's entire content was one sentence and two buttons, one of
-which said *Change gateway…* — so everything you would go looking for after a
-failed connect was one click further on, here. Now the heading says why you are
-looking at it and the gateway that failed is marked in its own row, beside the
-address, the credentials and any certificate waiting to be trusted.
+**A connection failure slides a notice down from the top and leaves you where
+you are.** It names the gateway, gives the reason in words with Chromium's error
+string beside it, and carries one link — *Open Settings* — which opens Settings
+as a modal over the window. Nothing navigates on its own.
 
-Every gateway row carries its own status: **Connected**, **Connecting…**,
+Two screens held this job before, a dedicated error page and then Settings
+itself, and both had the same flaw: they turned a failure into a *place*, one
+you then had to get back out of, when it is a condition that is either true or
+not. The notice stays until the gateway answers or you dismiss it.
+
+**Behind it the window shows the loading screen** it was already showing while
+the connect was in flight — the app's mark, the gateway it is reaching for, and
+a ring that stops and turns red when the attempt does, with a **Try again**. It
+is a view of its own laid over the page, so the gateway's document loads, or
+fails, underneath it untouched, and a successful connect is that view going
+away. The reason for the failure appears only in the notice: saying it in both
+places would be two wordings of one failure, free to drift apart.
+
+Every gateway row still carries its own status: **Connected**, **Connecting…**,
 **Cannot connect** with the reason in words and Chromium's error string beside
 it, or **Certificate not trusted**. The badge used to read "Connected" for
 whichever gateway was merely *selected*, which was wrong for exactly as long as
@@ -463,6 +474,7 @@ scripts/dump-menu.js     dumps the resolved menu bar, to diff across platforms
 scripts/dump-overlays.js opens each of the app's own dialogs and checks it rendered
 scripts/test-banner.js   raises a real condition and checks the banner's geometry
 scripts/test-cert-trust.js runs the refuse -> Settings -> trust -> connected loop for real
+scripts/test-connection-failure.js walks connecting -> failed -> recovered against real sockets
 ```
 
 ## Status and licence

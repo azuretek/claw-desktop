@@ -97,8 +97,13 @@ app.whenReady().then(async () => {
 
   // Dismissing is the user saying "I have read it", and it must take the view
   // with it — a zero-height view left behind is the same invisible strip.
-  await banner.executeJavaScript('document.querySelector(".banner__close").click()');
-  await delay(1200);
+  //
+  // Every card, not just the first: this profile also points at a port with
+  // nothing listening, so the connection failure raises a notice of its own
+  // beside the shortcut one. The view goes when the *last* condition is
+  // dismissed, which is the claim being made here.
+  await banner.executeJavaScript('document.querySelectorAll(".banner__close").forEach((b) => b.click())');
+  await delay(1500);
   check('dismissing takes the whole view away, not just the drawing',
     !bannerContents(), 'the banner view is still there after dismissal');
 

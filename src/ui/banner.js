@@ -45,11 +45,22 @@ function card(notice) {
     onclick: () => { void api.dismissNotice(notice.id); },
   });
 
+  // A link rather than a button, and the only one: this is where a notice says
+  // "the thing that fixes me is over there". It navigates; it does not act, so
+  // the notice stays up until the condition it describes actually passes.
+  const action = notice.action ? el('button', {
+    className: 'banner__action',
+    type: 'button',
+    textContent: notice.action.label,
+    onclick: () => { void api.noticeAction(notice.action.command); },
+  }) : null;
+
   return el('div', { className: `banner banner--${notice.tone}`, id: `n-${notice.id}` }, [
     el('div', { className: 'stack grow' }, [
       el('span', { className: 'banner__message', textContent: notice.message }),
       notice.detail ? el('span', { className: 'banner__detail', textContent: notice.detail }) : null,
     ]),
+    action,
     dismiss,
   ]);
 }

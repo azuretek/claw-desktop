@@ -26,6 +26,18 @@ const INFO = 'info';
 
 const RANK = { [ERROR]: 0, [WARN]: 1, [INFO]: 2 };
 
+/**
+ * Whether two actions are the same offer.
+ *
+ * Part of the identity check rather than ignored, because the offer can change
+ * while the message does not — and a banner whose button silently starts doing
+ * something else is worse than one that re-renders.
+ */
+function sameAction(a, b) {
+  if (!a || !b) return !a && !b;
+  return a.label === b.label && a.command === b.command;
+}
+
 function create() {
   const notices = new Map();
   let seq = 0;
@@ -33,13 +45,21 @@ function create() {
   /**
    * Raise a notice, or update the one already under this id.
    *
+   * `action` is the one place a notice offers to do something, and it is a
+   * *command name* rather than a callback: the banner is a sandboxed page on
+   * the other side of IPC, so anything it can invoke has to be a string main
+   * already knows how to run. It is deliberately singular — a notice that needs
+   * two buttons is a question, and a question is a dialog.
+   *
    * @param {string} id  stable per condition, not per occurrence
-   * @param {{tone?: string, message: string, detail?: string, dismissible?: boolean}} notice
+   * @param {{tone?: string, message: string, detail?: string, dismissible?: boolean,
+   *          action?: {label: string, command: string}}} notice
    * @returns {boolean} whether anything actually changed
    */
-  function set(id, { tone = ERROR, message, detail = null, dismissible = true }) {
+  function set(id, { tone = ERROR, message, detail = null, dismissible = true, action = null }) {
     const previous = notices.get(id);
-    if (previous && previous.tone === tone && previous.message === message && previous.detail === detail) {
+    if (previous && previous.tone === tone && previous.message === message && previous.detail === detail
+      && sameAction(previous.action, action)) {
       // Identical to what is already on screen. Reporting no change matters:
       // the caller uses it to avoid re-rendering, and a banner that re-renders
       // replays its slide-in animation for no reason.
@@ -51,6 +71,7 @@ function create() {
       message,
       detail,
       dismissible,
+      action: action ? { label: action.label, command: action.command } : null,
       // Insertion order within a severity, so a new warning appears below an
       // older one rather than shuffling what someone is reading.
       order: previous ? previous.order : seq++,

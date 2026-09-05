@@ -83,3 +83,33 @@ test('a detail line ends as a sentence even when the OS string does not', () => 
   assert.equal(notices.sentence(''), '', 'nothing in, nothing out — not a lone full stop');
   assert.equal(notices.sentence(null), '');
 });
+
+/* ----------------------------------------------------------------- actions */
+
+test('an action survives the round trip and is offered to the banner', () => {
+  const n = notices.create();
+  n.set('connection', { message: 'Cannot connect', action: { label: 'Open Settings', command: 'settings' } });
+  assert.deepEqual(n.list()[0].action, { label: 'Open Settings', command: 'settings' });
+});
+
+test('a notice with no action says so explicitly rather than omitting the key', () => {
+  // The banner reads `notice.action` directly; undefined and null behave the
+  // same there, but the shape crossing IPC should not depend on that.
+  const n = notices.create();
+  n.set('shortcut', { message: 'The shortcut was refused' });
+  assert.equal(n.list()[0].action, null);
+});
+
+test('a changed action counts as a change, even when the words do not move', () => {
+  const n = notices.create();
+  const base = { message: 'Cannot connect', detail: 'The gateway did not respond.' };
+  assert.equal(n.set('connection', { ...base, action: { label: 'Open Settings', command: 'settings' } }), true);
+  // Identical in every field: no re-render, so a banner that has been sitting
+  // there does not replay its slide.
+  assert.equal(n.set('connection', { ...base, action: { label: 'Open Settings', command: 'settings' } }), false);
+  // Same words, different offer. A button that silently starts doing something
+  // else is worse than a re-render.
+  assert.equal(n.set('connection', { ...base, action: { label: 'Open Settings', command: 'reconnect' } }), true);
+  // And dropping the offer entirely.
+  assert.equal(n.set('connection', base), true);
+});

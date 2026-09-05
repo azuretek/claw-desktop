@@ -1,13 +1,14 @@
 'use strict';
 
-// What each gateway's row in Settings says about itself.
+// What the app says about a connection: each gateway's row in Settings, and the
+// banner when the active one fails.
 //
-// This exists because the app no longer has a separate error page. A failed
-// connection used to replace the window with a dead end whose only real content
-// was one sentence; now it puts Settings back on screen, and the gateway that
-// failed says so in its own row — beside the address, the credentials and the
-// certificate that are usually the reason. The thing you would go to Settings
-// to fix is already in front of you.
+// A failure changes nothing about where you are. It used to replace the window
+// with a dead-end error page, and then with Settings — both of which take the
+// screen away from someone who did not ask to leave it. Now it slides a notice
+// down from the top with a link to Settings, and the window shows the loading
+// screen it was already showing while it tried. Going to Settings is a click,
+// and it is the reader's click.
 //
 // Pure, and Electron-free, so every phase and every error code can be exercised
 // from one `node --test` run. Settings is sandboxed and cannot require this, so
@@ -44,6 +45,36 @@ function hint({ code, description } = {}) {
 }
 
 /**
+ * Both halves of a failure: the sentence for the reader, the code for the
+ * search box. Shared by the gateway row and the banner so the two cannot end up
+ * describing the same failure differently.
+ */
+function reason(error) {
+  if (!error) return hint();
+  return `${hint(error)}${error.description ? ` (${error.description})` : ''}`;
+}
+
+/**
+ * What the banner says when a connection fails.
+ *
+ * A failure is a condition rather than an event — it stays true until the
+ * gateway comes back or someone changes something — which is the banner's whole
+ * shape, so it belongs there rather than in a dialog or a replaced screen.
+ *
+ * The action is a command name rather than a handler because this crosses IPC
+ * to a sandboxed page and back. Naming a command main already knows how to run
+ * keeps the renderer unable to ask for anything that was not offered.
+ */
+function failureNotice({ label, error = null } = {}) {
+  return {
+    tone: 'error',
+    message: `Cannot connect to ${label || 'the gateway'}`,
+    detail: reason(error),
+    action: { label: 'Open Settings', command: 'settings' },
+  };
+}
+
+/**
  * The status line for one gateway row.
  *
  * A certificate waiting for a decision outranks the connection phase, because
@@ -77,8 +108,7 @@ function status({ isActive, phase = IDLE, error = null, certOffer = null }) {
     return {
       tone: 'err',
       label: 'Cannot connect',
-      // Both halves: the sentence for the reader, the code for the search box.
-      detail: error ? `${hint(error)}${error.description ? ` (${error.description})` : ''}` : hint(),
+      detail: reason(error),
     };
   }
   return { tone: 'muted', label: 'Not connected', detail: null };
@@ -116,6 +146,6 @@ function isRealFailure({ code, isMainFrame }) {
 }
 
 module.exports = {
-  hint, status, isRealFailure, shouldMarkConnected, HINTS, ERR_ABORTED,
+  hint, reason, failureNotice, status, isRealFailure, shouldMarkConnected, HINTS, ERR_ABORTED,
   IDLE, CONNECTING, CONNECTED, FAILED,
 };

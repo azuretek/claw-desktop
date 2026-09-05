@@ -117,6 +117,9 @@ function layoutViews() {
   const top = chrome.contentInset().top;
   if (stripView) stripView.setBounds({ x: 0, y: 0, width, height: top });
   if (pageView) pageView.setBounds({ x: 0, y: top, width, height: Math.max(0, height - top) });
+  // Exactly over the page it stands in for, so the title strip stays visible
+  // and draggable while the app is connecting.
+  if (loadingView) loadingView.setBounds({ x: 0, y: top, width, height: Math.max(0, height - top) });
   // Exactly as tall as the banner page says it needs, and no taller: the view
   // eats every click inside its bounds regardless of what is drawn there.
   if (bannerView) bannerView.setBounds({ x: 0, y: top, width, height: Math.min(bannerHeight, Math.max(0, height - top)) });
@@ -255,9 +258,9 @@ function setConnection(patch) {
 /**
  * Show Settings as the window's own content rather than as a modal over it.
  *
- * Two situations need this, and they are not the same: a first run, where there
- * is no gateway to lay a modal over, and a failed connection, where there is a
- * gateway but nothing of it on screen.
+ * One situation needs this now: a first run, where there is no gateway to lay a
+ * modal over and nothing to connect to. A failed connection used to come here
+ * too — it raises a notice instead, and leaves the window where it was.
  *
  * @param {{firstRun?: boolean}} [opts]
  */
@@ -272,25 +275,32 @@ function showSettingsAsPage(opts = {}) {
 }
 
 /**
- * A connection failed, so put Settings back on screen with the failure in it.
+ * A connection failed, so say so without moving anyone.
  *
- * This replaced a dedicated error page whose entire content was one sentence
- * and two buttons, one of which said "Change gateway…". Everything someone
- * would go looking for after a failed connect — the address, whether a token is
- * saved, a certificate waiting to be trusted, the other gateways they could
- * switch to — was one click further on, on this page. So this is that page,
- * with the failure shown against the gateway it happened to.
+ * Two screens have held this job before: a dedicated error page whose whole
+ * content was one sentence and two buttons, and then Settings itself. Both take
+ * the window away from someone who did not ask to leave it, and both make the
+ * failure a *place* — somewhere you now are and have to get back out of.
+ *
+ * It is a condition instead. The notice slides down from the top, stays until
+ * the gateway answers or the reader dismisses it, and offers the one link worth
+ * offering. The window keeps showing the loading cover it was already showing
+ * while the connect was in flight, now in its stopped state.
  */
 function showConnectionFailure(detail) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   const gw = config.activeGateway();
-  console.warn(`[claw] cannot reach ${gw ? gw.label || gw.url : 'the gateway'}: ${detail.errorCode} ${detail.errorDescription}`);
+  const label = gw ? gw.label || gw.url : null;
+  console.warn(`[claw] cannot reach ${label || 'the gateway'}: ${detail.errorCode} ${detail.errorDescription}`);
   connection = {
     gatewayId: gw ? gw.id : null,
     phase: connectionState.FAILED,
     error: { code: detail.errorCode, description: detail.errorDescription || '' },
   };
-  showSettingsAsPage();
+  setNotice('connection', connectionState.failureNotice({ label, error: connection.error }));
+  // Already up from the connect attempt; this re-asserts it for the case where
+  // the very first load failed before anything covered the window.
+  showLoadingCover();
   notifyStateChanged();
 }
 
@@ -329,7 +339,14 @@ function loadActiveGateway() {
   }
   settingsIsPage = false;
   autofilled = false;
+  // The previous failure is over the moment a new attempt starts. Leaving it up
+  // would have the banner reporting a dead error against a live connect.
+  clearNotice('connection');
   setConnection({ gatewayId: gw.id, phase: connectionState.CONNECTING, error: null });
+  // Raised before the load rather than after, because the whole point is to
+  // cover the gap: a `loadURL` to an unreachable host leaves the previous
+  // document — or a blank view — on screen for as long as it takes to fail.
+  showLoadingCover();
   const creds = secrets.load(gw.id);
   const supplied = [creds.token && 'token', creds.password && 'password', creds.headers.length && `${creds.headers.length} header(s)`]
     .filter(Boolean).join(', ');
@@ -697,6 +714,11 @@ function createMainWindow() {
     // decides; see shouldMarkConnected in src/connection.js.
     if (connectionState.shouldMarkConnected({ phase: connection.phase, url: wc.getURL() })) {
       setConnection({ phase: connectionState.CONNECTED, error: null });
+      // The gateway is on screen behind the cover, so the cover comes down and
+      // any failure it was reporting is over. Both are keyed to the one event
+      // that proves it -- a load that finished on a page that is not ours.
+      clearNotice('connection');
+      hideLoadingCover();
     }
     maybeAutofill(wc);
     void maybeRefreshForNewBuild(wc);
@@ -738,28 +760,26 @@ function createMainWindow() {
     stripView = null;
     bannerView = null;
     bannerHeight = 0;
+    loadingView = null;
     overlayViews.clear();
+    // A recreated window is a new window, and it has to be allowed to show.
+    windowRevealed = false;
     // Nothing left to answer with, so an in-flight message dialog cancels.
     settleMessage(null);
   });
 
   // `ready-to-show` is the window's own signal and it never fires now: the
   // window has no content of its own, only child views. So the first paint of
-  // the *page* is what the window waits for. `dom-ready` rather than
-  // `did-finish-load` because subresources should not hold the window back, and
-  // `once` on both paths so a later navigation cannot re-show a window the user
-  // has since sent to the tray.
+  // any of them is what the window waits for — `dom-ready` rather than
+  // `did-finish-load`, because subresources should not hold the window back.
   //
   // The window's backgroundColor is the theme surface, so the gap before that
   // fires shows the right colour rather than white.
-  if (!config.get().startHidden) {
-    const reveal = () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show(); };
-    wc.once('dom-ready', reveal);
-    // A gateway that never answers must not leave the app invisible with no way
-    // in but the tray; showing the window is also what makes the error page,
-    // which replaces the failed load, reachable.
-    setTimeout(reveal, 4000);
-  }
+  wc.once('dom-ready', revealMainWindow);
+  // Backstop only, and it should never be what fires: the loading cover paints
+  // in milliseconds and reveals the window itself (see showLoadingCover). This
+  // is here for the case where there is no cover and no page either.
+  setTimeout(revealMainWindow, 4000);
 
   loadActiveGateway();
   // Anything raised before there was a window to put it in -- the shortcut and
@@ -854,9 +874,9 @@ const overlayViews = new Map();
 function overlaySearch(opts = {}) {
   const params = new URLSearchParams();
   if (opts.firstRun) params.set('firstRun', '1');
-  // Settings is the window's own content rather than a dialog in it. Separate
-  // from firstRun, which used to imply it: a failed connection also puts it
-  // there, but with the preferences shown rather than hidden.
+  // Settings is the window's own content rather than a dialog in it. Kept
+  // separate from firstRun so the two can differ again — firstRun additionally
+  // hides the preferences, which being the window's content does not imply.
   if (opts.page || opts.firstRun) params.set('page', '1');
   if (chrome.enabled()) params.set('frameless', '1');
   return `?${params}`;
@@ -902,6 +922,7 @@ function openOverlay(name, opts = {}) {
     log: (msg) => console.error(`[claw] ${name} overlay: ${msg}`),
   });
   mainWindow.contentView.addChildView(view);
+  restackViews();
   layoutViews();
   wc.loadFile(path.join(UI_DIR, OVERLAY_PAGES[name]), { search: opts.search || overlaySearch() });
   wc.once('did-finish-load', () => {
@@ -949,6 +970,90 @@ function closeSettings() {
   closeOverlay('settings');
 }
 
+/* ------------------------------------------------------------- first paint */
+
+// Whether the window has had its one automatic reveal this lifetime.
+//
+// Several things can be the first to paint — the gateway page, the loading
+// cover, the timeout backstop — and exactly one of them should show the window.
+// A flag rather than `once` on each, because they are separate emitters, and
+// without it a reconnect would re-show a window the user has since sent to the
+// tray. Reset when the window is recreated, which macOS does after a real
+// close.
+let windowRevealed = false;
+
+function revealMainWindow() {
+  if (windowRevealed || config.get().startHidden) return;
+  windowRevealed = true;
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show();
+}
+
+/* ----------------------------------------------------------- loading cover */
+
+// What the window shows when it has no gateway page to show: during a connect,
+// and after one that failed.
+//
+// A view of its own rather than a page loaded into the gateway's view, because
+// of what a failure does to that view. Chromium commits its own error document
+// there, and loading over the top of it would be a second navigation racing the
+// first — the exact shape that produced spurious `did-fail-load` events the
+// last time these two shared a WebContents. Here the gateway page loads, or
+// fails, underneath and untouched, and success is this view going away.
+let loadingView = null;
+
+/**
+ * Re-add the child views in z-order.
+ *
+ * `addChildView` on a view that is already attached moves it to the top, so the
+ * order of these calls *is* the stacking order: the gateway page at the bottom,
+ * then the cover over it, then the banner over that, then any modals. It runs
+ * whenever one of them appears, because a view added later would otherwise land
+ * above ones that must stay above it — a cover over the banner, or over the
+ * Settings modal the banner links to, is a locked window.
+ */
+function restackViews() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  for (const view of [loadingView, bannerView, ...overlayViews.values()]) {
+    if (!view || view.webContents.isDestroyed()) continue;
+    try { mainWindow.contentView.addChildView(view); } catch { /* window gone */ }
+  }
+}
+
+function showLoadingCover() {
+  if (!mainWindow || mainWindow.isDestroyed() || loadingView) return;
+  loadingView = new WebContentsView({
+    webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false, sandbox: true },
+  });
+  // Opaque, unlike the overlays: this is a cover, and the whole reason it
+  // exists is that what is behind it should not be seen.
+  loadingView.setBackgroundColor('#00000000');
+  const wc = loadingView.webContents;
+  attachContextMenu(wc);
+  mainWindow.contentView.addChildView(loadingView);
+  restackViews();
+  wc.loadFile(path.join(UI_DIR, 'loading.html'), { search: overlaySearch() });
+  wc.once('did-finish-load', () => applyThemeCss(wc));
+  // The cover is usually the first thing in this window able to paint, and on a
+  // slow or unreachable gateway it is the *only* thing for as long as the load
+  // takes. Revealing on it turns "the app is invisible for four seconds and
+  // then shows an error" into "the app opens, and it is loading".
+  wc.once('dom-ready', revealMainWindow);
+  layoutViews();
+}
+
+function hideLoadingCover() {
+  if (!loadingView) return;
+  const view = loadingView;
+  // Cleared first: removing the view can throw if the window is already going,
+  // and a handle left behind would keep the cover "up" forever from the app's
+  // point of view while nothing is on screen.
+  loadingView = null;
+  themeCssKeys.delete(view.webContents.id);
+  try { mainWindow?.contentView.removeChildView(view); } catch { /* window already gone */ }
+  try { if (!view.webContents.isDestroyed()) view.webContents.close(); } catch { /* already torn down */ }
+  page()?.focus();
+}
+
 /* ------------------------------------------------------------------ banner */
 
 // Conditions that are true until something fixes them: credentials that cannot
@@ -991,9 +1096,8 @@ function refreshBanner() {
     const wc = bannerView.webContents;
     attachContextMenu(wc);
     mainWindow.contentView.addChildView(bannerView);
-    // Added before any overlay that is already open would be re-added, so a
-    // modal still covers it. Overlays are re-stacked below for that reason.
-    for (const view of overlayViews.values()) mainWindow.contentView.addChildView(view);
+    // Over the cover, under any modal that is already open.
+    restackViews();
     wc.loadFile(path.join(UI_DIR, 'banner.html'), { search: overlaySearch() });
     wc.once('did-finish-load', () => applyThemeCss(wc));
     layoutViews();
@@ -1100,6 +1204,7 @@ function refreshThemedPages() {
     stripView.setBackgroundColor(currentTheme.surface);
   }
   if (bannerView && !bannerView.webContents.isDestroyed()) applyThemeCss(bannerView.webContents);
+  if (loadingView && !loadingView.webContents.isDestroyed()) applyThemeCss(loadingView.webContents);
   if (settingsIsPage && mainWindow && !mainWindow.isDestroyed()) {
     applyThemeCss(page());
   }
@@ -1363,6 +1468,11 @@ function notifyStateChanged() {
   for (const view of overlayViews.values()) {
     if (!view.webContents.isDestroyed()) view.webContents.send('app:state-changed');
   }
+  // The cover is the one page whose entire content is the connection, so it is
+  // the one that must never miss this. Left out, it renders once at whatever
+  // the phase was when it loaded and keeps saying it — which reads as an app
+  // stuck connecting long after the attempt stopped.
+  if (loadingView && !loadingView.webContents.isDestroyed()) loadingView.webContents.send('app:state-changed');
   if (settingsIsPage && page()) page().send('app:state-changed');
 }
 
@@ -1626,6 +1736,9 @@ function currentState() {
       }),
     })),
     activeGatewayId: cfg.activeGatewayId,
+    // The active connection as one field, for the loading cover, which asks
+    // "still trying, or stopped?" and has no gateway row to read it out of.
+    connection: { gatewayId: connection.gatewayId, phase: connection.phase },
     secretsAvailable: secrets.available(),
     frameless: chrome.enabled(),
     secretsError: secrets.unavailableReason(),
@@ -1758,6 +1871,17 @@ function registerIpc() {
     layoutViews();
   });
   ipcMain.handle('app:dismiss-notice', (_e, id) => { clearNotice(String(id)); });
+  // A notice's one offer. A lookup rather than a dispatch, so a page can only
+  // ever reach a command that was written here — the renderer names it, it does
+  // not describe it, and an unknown name is nothing rather than an error.
+  ipcMain.handle('app:notice-action', (_e, command) => {
+    const commands = { settings: () => openSettings(), reconnect: () => loadActiveGateway() };
+    const run = commands[String(command)];
+    if (run) run();
+  });
+  // The loading cover's Try again, which is the same act as the menu's
+  // Reconnect and goes to the same place.
+  ipcMain.handle('app:reconnect', () => { loadActiveGateway(); });
 
   ipcMain.handle('app:message', () => (currentMessage ? currentMessage.spec : null));
   ipcMain.handle('app:message-respond', (_e, index) => {

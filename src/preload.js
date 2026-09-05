@@ -47,7 +47,12 @@ if (isLocalPage) {
     notices: () => ipcRenderer.invoke('app:notices'),
     bannerHeight: (height) => ipcRenderer.invoke('app:banner-height', height),
     dismissNotice: (id) => ipcRenderer.invoke('app:dismiss-notice', id),
+    // A notice's one offer, by name. Main runs only the commands it recognises,
+    // so the page can ask for what it was offered and nothing else.
+    noticeAction: (command) => ipcRenderer.invoke('app:notice-action', command),
     onNoticesChanged: (fn) => ipcRenderer.on('app:notices-changed', () => fn()),
+    // The loading cover, shown while connecting and after a failure.
+    reconnect: () => ipcRenderer.invoke('app:reconnect'),
     message: () => ipcRenderer.invoke('app:message'),
     respondToMessage: (index) => ipcRenderer.invoke('app:message-respond', index),
   });
