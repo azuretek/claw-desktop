@@ -95,7 +95,7 @@ test('every overlay page main.js can open exists on disk', () => {
   assert.ok(block, 'OVERLAY_PAGES not found in main.js');
 
   const pages = [...block[1].matchAll(/(\w+):\s*'([^']+)'/g)].map(([, name, file]) => ({ name, file }));
-  assert.ok(pages.length >= 3, `expected settings, about and message; found ${pages.length}`);
+  assert.ok(pages.length >= 2, `expected settings and about; found ${pages.length}`);
 
   for (const { name, file } of pages) {
     assert.ok(fs.existsSync(path.join(UI, file)), `${name} -> ui/${file} does not exist`);
@@ -109,4 +109,51 @@ test('every overlay page main.js can open exists on disk', () => {
     // without one is a page whose failure mode is "the buttons do nothing".
     assert.match(html, /Content-Security-Policy/, `ui/${file} has no CSP`);
   }
+});
+
+test('the app has no modal message dialog left to reach for', () => {
+  // Stronger than "not a native dialog", and a separate rule: every message the
+  // app used to interrupt with is now a notice in the banner. The queue, the
+  // page and the IPC pair that carried them are gone, so this guards the
+  // regression of adding one back rather than raising a notice — which would
+  // read as reasonable in review and quietly reintroduce a modal that steals
+  // focus to say "you are up to date".
+  const main = code(path.join(SRC, 'main.js'));
+  assert.doesNotMatch(main, /\bshowMessage\s*\(/, 'main.js opens a modal message dialog');
+  assert.ok(!fs.existsSync(path.join(UI, 'message.html')), 'ui/message.html is back');
+});
+
+test('every command a notice can name is one main knows how to run', () => {
+  // A notice's button is a *string* main looks up, because the banner is a
+  // sandboxed page and cannot be handed a callback. An unknown name resolves to
+  // nothing on purpose — a renderer must not be able to invent commands — so a
+  // typo here is not an error anywhere. It is a button that does nothing, which
+  // on the "Restart now" of a downloaded update is the whole feature failing in
+  // silence.
+  const main = code(path.join(SRC, 'main.js'));
+
+  const lookup = /const commands = \{([\s\S]*?)\n {4}\};/.exec(main);
+  assert.ok(lookup, 'the notice-action command lookup was not found');
+  const known = new Set([...lookup[1].matchAll(/(?:'([^']+)'|(\w+)):/g)].map((m) => m[1] || m[2]));
+  assert.ok(known.size >= 4, `only found ${known.size} commands`);
+
+  const offered = [...main.matchAll(/command:\s*'([^']+)'/g)].map(([, c]) => c);
+  assert.ok(offered.length >= 4, `only found ${offered.length} offers`);
+  for (const command of offered) {
+    assert.ok(known.has(command), `a notice offers '${command}', which main cannot run`);
+  }
+});
+
+test('the notice banner draws above the overlays', () => {
+  // The banner is the app's only way of saying anything now, so it has to be
+  // visible from everywhere — including over Settings, which is exactly where
+  // "the gateway is up, here is the way through" has to appear. Stacked under
+  // the overlays it is drawn behind them: the notice is raised, the store says
+  // so, and nothing is on screen.
+  const main = code(path.join(SRC, 'main.js'));
+  const order = /for \(const view of \[([^\]]*)\]\)/.exec(main);
+  assert.ok(order, 'the restackViews z-order list was not found');
+  const names = order[1].split(',').map((s) => s.trim());
+  assert.ok(names.indexOf('bannerView') > names.indexOf('...overlayViews.values()'),
+    `banner must come after the overlays; got ${names.join(', ')}`);
 });

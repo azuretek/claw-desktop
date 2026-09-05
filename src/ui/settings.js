@@ -22,11 +22,6 @@ let state = null;
 // Which gateway's credential editor is open. Kept across re-renders so saving a
 // field does not collapse the panel you are working in.
 let editing = null;
-// The gateway this page asked to connect, if any. Held only for this visit,
-// which is the point: it is what separates "you pressed Connect and it worked"
-// from "you opened Settings over a gateway that was already connected". The
-// second needs no announcement — the close button was always going to do it.
-let awaiting = null;
 
 /* Build DOM nodes rather than assigning innerHTML: labels and URLs are
    user-supplied strings, and this page has no business parsing them as HTML. */
@@ -227,13 +222,9 @@ function renderGateways() {
         // button doing nothing.
         disabled: active && phase === 'connecting',
         textContent: (active && phase === 'connecting') ? 'Connecting…' : (active ? 'Reconnect' : 'Connect'),
-        onclick: () => {
-          // Remember that the ask came from here, so the "it is ready" strip is
-          // an answer to something rather than an unprompted announcement on
-          // every visit to a page over a gateway that was already connected.
-          awaiting = gw.id;
-          void api.connect(gw.id);
-        },
+        // The result arrives as a notice over the top of this page, rather than
+        // by this page closing itself. See announceConnected() in src/main.js.
+        onclick: () => { void api.connect(gw.id); },
       }),
       el('button', {
         className: 'ghost',
@@ -380,42 +371,6 @@ function renderAbout() {
 }
 
 /**
- * "The Control UI is loaded and waiting behind this page."
- *
- * The answer to a Connect pressed here, and the reason pressing it no longer
- * closes the page by itself. A connect that succeeds is otherwise completely
- * silent from in here: the window behind fills with the Control UI, this page
- * is opaque over the top of it, and the only clue is a badge in a row changing
- * one word. So the result gets said, once, with the way through attached.
- *
- * It cannot be the notice banner, which is where every other standing condition
- * goes: the banner's view is stacked *under* the overlays, so anything raised
- * while Settings is open is behind it. An answer to something asked on this
- * page has to be shown on this page.
- */
-function renderReady() {
-  const host = $('ready');
-  host.replaceChildren();
-  const connected = state.connection && state.connection.phase === 'connected';
-  if (!awaiting || !connected || state.activeGatewayId !== awaiting) return;
-
-  const gw = state.gateways.find((g) => g.id === awaiting);
-  host.append(el('div', { className: 'card ready' }, [
-    el('div', { className: 'row' }, [
-      el('div', { className: 'stack grow' }, [
-        el('span', { className: 'name', textContent: `Connected to ${gw ? gw.label || gw.url : 'the gateway'}` }),
-        el('span', { className: 'muted-sm', textContent: 'The Control UI is loaded and waiting behind this page.' }),
-      ]),
-      el('button', {
-        className: 'primary',
-        textContent: 'Open it',
-        onclick: () => { void api.closeSettings(); },
-      }),
-    ]),
-  ]));
-}
-
-/**
  * The heading.
  *
  * It used to carry the reason this page was on screen, because a failure put it
@@ -432,7 +387,6 @@ function renderHeading() {
 
 function render() {
   renderHeading();
-  renderReady();
   renderGateways();
   renderAbout();
   if (!firstRun) { renderCertOffers(); renderCerts(); renderPrefs(); }

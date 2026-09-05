@@ -31,6 +31,22 @@
     <h1 class="loading__title" id="title">Connecting…</h1>
     <p class="loading__label" id="label"></p>
     <p class="loading__url mono" id="url"></p>
+
+    <!-- The bar reports milestones a load actually reached, eased over time so
+         it does not sit still through the long ones. src/progress.js owns the
+         curve and says what the number is allowed to claim. -->
+    <div class="loading__progress" role="progressbar" id="bar"
+         aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-labelledby="title">
+      <span class="loading__progress-fill" id="fill"></span>
+    </div>
+    <p class="loading__meter">
+      <span class="loading__percent mono" id="percent">0%</span>
+      <!-- aria-hidden: the quips are decoration, and a screen reader announcing
+           a new joke every three seconds over a live progress bar is noise on
+           top of the one thing here worth hearing. -->
+      <span class="loading__quip" id="quip" aria-hidden="true"></span>
+    </p>
+
     <button class="ghost loading__retry" id="retry" type="button" hidden>Try again</button>
   </main>
   <script src="loading.js"></script>

@@ -287,9 +287,13 @@ body.banner-body { background: transparent; overflow: hidden; }
   .banner { animation: none; }
 }
 
+/* Info is deliberately not the accent colour. This app's accent is its brand
+   red, so an accent-edged notice is indistinguishable from a failure at the
+   glance the edge exists for — which is the whole job of the stripe. */
 .banner--error { border-left-color: var(--destructive); }
 .banner--warn  { border-left-color: var(--warn); }
-.banner--info  { border-left-color: var(--accent); }
+.banner--info  { border-left-color: var(--border-strong); }
+.banner--ok    { border-left-color: var(--ok); }
 
 .banner__message { font-weight: 600; color: var(--text-strong); }
 .banner__detail  { color: var(--muted); font-size: 12px; }
@@ -320,23 +324,6 @@ body.banner-body { background: transparent; overflow: hidden; }
   border-radius: var(--radius-sm); color: var(--muted); cursor: pointer;
 }
 .banner__close:hover { background: var(--bg-hover); color: var(--text-strong); }
-
-/* The one card on the page that is good news, and the only one that appears in
-   response to something rather than describing standing state. Tinted and
-   green-edged so it separates from the row of neutral cards below it, and slid
-   in from above like a notice, because it arrives while you are reading. */
-.ready {
-  border-color: var(--ok);
-  background: color-mix(in srgb, var(--ok) 8%, var(--panel));
-  animation: ready-in .22s cubic-bezier(.2, .8, .3, 1) both;
-}
-@keyframes ready-in {
-  from { transform: translateY(-8px); opacity: 0; }
-  to   { transform: none; opacity: 1; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .ready { animation: none; }
-}
 
 /* --------------------------------------------------------------- loading */
 
@@ -425,6 +412,72 @@ body.is-failed .loading__mark::before { animation: none; opacity: .3; }
 .loading__label { color: var(--text); margin: 0 0 4px; font-weight: 550; }
 .loading__url { color: var(--muted); font-size: 11.5px; margin: 0; max-width: 420px; }
 .loading__retry { margin-top: 22px; }
+
+/* A fixed width rather than a share of the window: the bar sits under a URL
+   that can be any length, and one that resized with the window would make the
+   same 40% look like a different amount of progress at different sizes. */
+.loading__progress {
+  width: min(320px, 76vw);
+  height: 4px;
+  margin: 22px 0 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  overflow: hidden;
+}
+
+.loading__progress-fill {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent, var(--text));
+  /* Just longer than the 250ms push, so each value is still travelling when the
+     next arrives and the bar reads as continuous rather than as steps. Width
+     rather than a transform because the fill is clipped by the track, and a
+     scaled fill would blur its own leading edge. */
+  transition: width .32s linear;
+}
+
+/* Frozen, and saying so. The bar keeps the distance it got to — resetting it to
+   zero would erase the one piece of evidence on screen about how far the
+   connection got, which is the difference between "the host never answered" and
+   "the page started loading and died". */
+body.is-failed .loading__progress-fill {
+  background: var(--destructive);
+  transition: none;
+}
+
+.loading__meter {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 10px 0 0;
+  width: min(320px, 76vw);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.loading__percent { font-variant-numeric: tabular-nums; }
+
+.loading__quip {
+  flex: 1;
+  min-width: 0;
+  text-align: right;
+  /* One line, always. These rotate every few seconds, and a longer one wrapping
+     would push the retry button down the page in the middle of a wait. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: .78;
+}
+
+/* Nothing is loading, so the joke stops being decoration and starts being a
+   remark about the failure. */
+body.is-failed .loading__quip { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .loading__progress-fill { transition: none; }
+}
 
 /* ----------------------------------------------------------------- inputs */
 

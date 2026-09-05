@@ -23,8 +23,14 @@
 const ERROR = 'error';
 const WARN = 'warn';
 const INFO = 'info';
+// Good news: connected, or an update finished downloading. A separate tone
+// rather than INFO because this app's accent colour is red, so an informational
+// notice is already indistinguishable from a failure at a glance — and these
+// three are the ones where reading "connected" as an alarm is worst.
+const OK = 'ok';
 
-const RANK = { [ERROR]: 0, [WARN]: 1, [INFO]: 2 };
+// Sorted worst first, so a failure sits above a success rather than under it.
+const RANK = { [ERROR]: 0, [WARN]: 1, [INFO]: 2, [OK]: 3 };
 
 /**
  * Whether two actions are the same offer.
@@ -97,16 +103,22 @@ function create() {
 }
 
 /**
- * End a fragment with a full stop, unless it already ends with punctuation.
+ * Make a fragment into a sentence: capital at the front, full stop at the back.
  *
  * Every detail line here is one of our sentences with a string from the OS or a
- * library dropped into it, and those end however they end. Without this the
- * banner reads "conversion failure from Frobnicate+Zz Change it in Settings."
+ * library dropped into it, and those start and end however they start and end.
+ * Without the full stop the banner reads "conversion failure from Frobnicate+Zz
+ * Change it in Settings."; without the capital, a reason written to be appended
+ * to a sentence — "running from source" — stands alone looking truncated.
+ *
+ * Only the first character is touched, so an all-caps error code arrives
+ * unharmed.
  */
 function sentence(text) {
   const trimmed = String(text == null ? '' : text).trim();
   if (!trimmed) return '';
-  return /[.!?:;]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+  const capitalised = trimmed[0].toUpperCase() + trimmed.slice(1);
+  return /[.!?:;]$/.test(capitalised) ? capitalised : `${capitalised}.`;
 }
 
-module.exports = { create, sentence, ERROR, WARN, INFO };
+module.exports = { create, sentence, ERROR, WARN, INFO, OK };

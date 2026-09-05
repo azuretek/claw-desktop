@@ -73,15 +73,34 @@ test('two stores do not share state', () => {
   assert.equal(b.size(), 0);
 });
 
-test('a detail line ends as a sentence even when the OS string does not', () => {
+test('a detail line reads as a sentence even when the OS string does not', () => {
   // Every detail is one of our sentences with a string from the OS dropped in,
-  // and those end however they end.
-  assert.equal(notices.sentence('conversion failure from Frobnicate+Zz'), 'conversion failure from Frobnicate+Zz.');
+  // and those start and end however they start and end.
+  assert.equal(notices.sentence('conversion failure from Frobnicate+Zz'), 'Conversion failure from Frobnicate+Zz.');
   assert.equal(notices.sentence('Already ends.'), 'Already ends.');
   assert.equal(notices.sentence('So does this!'), 'So does this!');
-  assert.equal(notices.sentence('  padded  '), 'padded.');
+  assert.equal(notices.sentence('  padded  '), 'Padded.');
   assert.equal(notices.sentence(''), '', 'nothing in, nothing out — not a lone full stop');
   assert.equal(notices.sentence(null), '');
+});
+
+test('a reason written to be appended still reads standing alone', () => {
+  // update.policy() phrases its reason for the middle of a sentence ("...because
+  // it is running from source"). In the banner it is the whole line, and an
+  // uncapitalised one looks like the start of it went missing.
+  assert.equal(notices.sentence('running from source'), 'Running from source.');
+});
+
+test('an error code keeps its own capitals', () => {
+  // Only the first character is touched, so a Chromium code arrives unharmed.
+  assert.equal(notices.sentence('ERR_EMPTY_RESPONSE'), 'ERR_EMPTY_RESPONSE.');
+});
+
+test('good news sorts below a failure, so an alarm is never pushed down', () => {
+  const store = notices.create();
+  store.set('good', { tone: notices.OK, message: 'Connected' });
+  store.set('bad', { tone: notices.ERROR, message: 'Cannot connect' });
+  assert.deepEqual(store.list().map((n) => n.id), ['bad', 'good']);
 });
 
 /* ----------------------------------------------------------------- actions */

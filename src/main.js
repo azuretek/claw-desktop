@@ -23,6 +23,8 @@ const menus = require('./menus');
 const noticeStore = require('./notices');
 const overlay = require('./overlay');
 const profile = require('./profile');
+const progress = require('./progress');
+const quips = require('./quips');
 const updates = require('./updates');
 const secrets = require('./secrets');
 const defaults = require('./defaults');
@@ -248,11 +250,35 @@ function applyHeaders(ses) {
 
 // Which gateway this app is pointed at and how that is going. One gateway at a
 // time, because only one is ever loaded.
-let connection = { gatewayId: null, phase: connectionState.IDLE, error: null };
+//
+// `milestone` and `milestoneAt` are the loading cover's progress bar: the
+// furthest stage this load has reached and when it got there. Held here rather
+// than in the cover because the cover is torn down and rebuilt across a retry
+// and the load is not -- see src/progress.js for what the pair means.
+let connection = {
+  gatewayId: null,
+  phase: connectionState.IDLE,
+  error: null,
+  milestone: progress.START,
+  milestoneAt: Date.now(),
+};
 
 function setConnection(patch) {
   connection = { ...connection, ...patch };
   notifyStateChanged();
+}
+
+/**
+ * Record that the load reached a stage, if it is actually further than the last.
+ *
+ * Forward-only, because these events do not arrive in a clean order: the Control
+ * UI routes on load, so its in-page navigation fires `did-start-navigation`
+ * after `dom-ready`, and taking that at face value walks the bar backwards.
+ */
+function reachMilestone(milestone) {
+  if (connection.phase !== connectionState.CONNECTING) return;
+  if (!progress.isAhead(milestone, connection.milestone)) return;
+  setConnection({ milestone, milestoneAt: Date.now() });
 }
 
 /**
@@ -301,7 +327,36 @@ function showConnectionFailure(detail) {
   // Already up from the connect attempt; this re-asserts it for the case where
   // the very first load failed before anything covered the window.
   showLoadingCover();
+  // One last push so the bar lands on the stage the load genuinely reached, then
+  // stop: nothing is progressing, and a line of jokes still cycling under a dead
+  // connection reads as an app that has not noticed.
+  pushProgress();
+  stopProgressTicker();
   notifyStateChanged();
+}
+
+/**
+ * "The Control UI is loaded and waiting behind this page."
+ *
+ * A connect that succeeds while Settings is open is otherwise completely silent
+ * from in there: the window behind fills with the Control UI, Settings is opaque
+ * over the top of it, and the only clue is a badge in a row changing one word.
+ * So the result gets said, once, with the way through attached.
+ *
+ * This used to be a card on the Settings page itself, on the reasoning that an
+ * answer to something asked on a page has to appear on that page. It is a notice
+ * now, with the rest of them -- which is only possible because the banner's view
+ * moved above the overlays. See restackViews().
+ */
+function announceConnected() {
+  if (!overlayAlive('settings') && !settingsIsPage) return;
+  const gw = config.activeGateway();
+  setNotice('connected', {
+    tone: noticeStore.OK,
+    message: `Connected to ${gw ? gw.label || gw.url : 'the gateway'}`,
+    detail: 'The Control UI is loaded and waiting behind this page.',
+    action: { label: 'Open it', command: 'open-ui' },
+  });
 }
 
 /* -------------------------------------------------------------- main window */
@@ -342,7 +397,17 @@ function loadActiveGateway() {
   // The previous failure is over the moment a new attempt starts. Leaving it up
   // would have the banner reporting a dead error against a live connect.
   clearNotice('connection');
-  setConnection({ gatewayId: gw.id, phase: connectionState.CONNECTING, error: null });
+  // Whatever the last connect ended up saying is about a connection that is over.
+  clearNotice('connected');
+  // Back to the start of the bar. A retry that inherited the last attempt's
+  // milestone would open at 78% and go nowhere.
+  setConnection({
+    gatewayId: gw.id,
+    phase: connectionState.CONNECTING,
+    error: null,
+    milestone: progress.START,
+    milestoneAt: Date.now(),
+  });
   // Raised before the load rather than after, because the whole point is to
   // cover the gap: a `loadURL` to an unreachable host leaves the previous
   // document — or a blank view — on screen for as long as it takes to fail.
@@ -701,6 +766,13 @@ function createMainWindow() {
   // a title-only listener can read the previous URL.
   wc.on('did-navigate-in-page', refreshTitle);
 
+  // The two stages between "asked" and "answered", which is all Chromium offers
+  // and all the progress bar gets to work with. A navigation that commits means
+  // the host replied; `dom-ready` means the document parsed. Subresources are
+  // deliberately not tracked: the bar would then be waiting on fonts.
+  wc.on('did-navigate', () => reachMilestone(progress.NAVIGATED));
+  wc.on('dom-ready', () => reachMilestone(progress.DOM));
+
   wc.on('did-finish-load', () => {
     wc.setZoomLevel(config.get().zoomLevel || 0);
     // Our own pages (settings as the window's content) want the Control UI's
@@ -713,12 +785,13 @@ function createMainWindow() {
     // document for a failed main frame and that fires this too, so the phase
     // decides; see shouldMarkConnected in src/connection.js.
     if (connectionState.shouldMarkConnected({ phase: connection.phase, url: wc.getURL() })) {
-      setConnection({ phase: connectionState.CONNECTED, error: null });
+      setConnection({ phase: connectionState.CONNECTED, error: null, milestone: progress.DONE, milestoneAt: Date.now() });
       // The gateway is on screen behind the cover, so the cover comes down and
       // any failure it was reporting is over. Both are keyed to the one event
       // that proves it -- a load that finished on a page that is not ours.
       clearNotice('connection');
       hideLoadingCover();
+      announceConnected();
     }
     maybeAutofill(wc);
     void maybeRefreshForNewBuild(wc);
@@ -764,8 +837,8 @@ function createMainWindow() {
     overlayViews.clear();
     // A recreated window is a new window, and it has to be allowed to show.
     windowRevealed = false;
-    // Nothing left to answer with, so an in-flight message dialog cancels.
-    settleMessage(null);
+    // The cover went with the window, so nothing is listening for progress.
+    stopProgressTicker();
   });
 
   // `ready-to-show` is the window's own signal and it never fires now: the
@@ -862,7 +935,7 @@ function adoptTheme(theme) {
  * Views stack in the order they are added, so a message opened while Settings
  * is up lands on top of it and Settings is still there underneath when it goes.
  */
-const OVERLAY_PAGES = { settings: 'settings.html', about: 'about.html', message: 'message.html' };
+const OVERLAY_PAGES = { settings: 'settings.html', about: 'about.html' };
 
 /** name -> WebContentsView, in the order they were opened, which is z-order. */
 const overlayViews = new Map();
@@ -945,15 +1018,14 @@ function closeOverlay(name) {
   try {
     if (!view.webContents.isDestroyed()) view.webContents.close();
   } catch { /* already torn down */ }
-  // A message shown over Settings must hand focus back to Settings, not to the
+  // About shown over Settings must hand focus back to Settings, not to the
   // gateway page buried under both of them.
   const remaining = [...overlayViews.values()].filter((v) => !v.webContents.isDestroyed());
   if (remaining.length) remaining[remaining.length - 1].webContents.focus();
   else page()?.focus();
-  // The renderer is the only thing that can answer a message dialog, so losing
-  // it has to count as the cancel button. Otherwise a crashed overlay leaves
-  // whoever awaited showMessage() waiting for a click that can never happen.
-  if (name === 'message') settleMessage(null);
+  // Nobody is behind Settings waiting to be told the gateway is up any more, so
+  // the offer to go and look at it is over.
+  if (name === 'settings') clearNotice('connected');
 }
 
 function openSettings() {
@@ -1006,21 +1078,90 @@ let loadingView = null;
  *
  * `addChildView` on a view that is already attached moves it to the top, so the
  * order of these calls *is* the stacking order: the gateway page at the bottom,
- * then the cover over it, then the banner over that, then any modals. It runs
- * whenever one of them appears, because a view added later would otherwise land
- * above ones that must stay above it — a cover over the banner, or over the
- * Settings modal the banner links to, is a locked window.
+ * then the cover over it, then any modals, and the notice banner above
+ * everything. It runs whenever one of them appears, because a view added later
+ * would otherwise land above ones that must stay above it — a cover over the
+ * Settings modal is a locked window.
+ *
+ * The banner is on top rather than under the modals, and that is the whole
+ * reason a notice can now be the app's only way of telling you something.
+ * Underneath, anything raised while Settings was open was drawn behind it: a
+ * connection failing, an update arriving, or the answer to a Connect pressed on
+ * that very page went to a strip nobody could see. Which is why those three used
+ * to be a dialog, a dialog, and a card on the Settings page — three shapes for
+ * one job, because the one shape did not work from everywhere.
+ *
+ * It costs the top ~72px of a modal while a notice is up. That is a real cost
+ * and it is the right way round: the modal is a page someone opened and can
+ * scroll, the notice is the app saying something changed underneath them.
  */
 function restackViews() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  for (const view of [loadingView, bannerView, ...overlayViews.values()]) {
+  for (const view of [loadingView, ...overlayViews.values(), bannerView]) {
     if (!view || view.webContents.isDestroyed()) continue;
     try { mainWindow.contentView.addChildView(view); } catch { /* window gone */ }
   }
 }
 
+/* --------------------------------------------------------------- progress */
+
+// The cover's progress bar and the line under it, both computed here and pushed
+// as a pair.
+//
+// The cover is sandboxed and cannot require src/progress.js or src/quips.js, and
+// the alternative to pushing is copying the curve into the page — two owners for
+// one number, which drift the first time either is touched. So main ticks and
+// the page draws.
+//
+// Four times a second, and only when the integer changes: that is far short of a
+// frame, and it does not need to be. The fill has a CSS transition just longer
+// than the tick, so the bar glides between the numbers it is given.
+const PROGRESS_TICK_MS = 250;
+let progressTimer = null;
+let progressLast = null;
+let quipOffset = quips.startAt();
+
+function progressNow() {
+  return {
+    percent: progress.percent({
+      milestone: connection.milestone,
+      sinceMs: Date.now() - connection.milestoneAt,
+      failed: connection.phase === connectionState.FAILED,
+    }),
+    // Rotated off the wall clock rather than the tick count, so the line does
+    // not restart its cycle every time the cover is rebuilt on a retry.
+    quip: quips.quipAt(Date.now() / quips.ROTATE_MS, quipOffset),
+  };
+}
+
+function pushProgress() {
+  if (!loadingView || loadingView.webContents.isDestroyed()) return;
+  const next = progressNow();
+  if (progressLast && progressLast.percent === next.percent && progressLast.quip === next.quip) return;
+  progressLast = next;
+  loadingView.webContents.send('app:progress', next);
+}
+
+function startProgressTicker() {
+  if (progressTimer) return;
+  progressLast = null;
+  progressTimer = setInterval(pushProgress, PROGRESS_TICK_MS);
+}
+
+function stopProgressTicker() {
+  if (!progressTimer) return;
+  clearInterval(progressTimer);
+  progressTimer = null;
+  progressLast = null;
+}
+
 function showLoadingCover() {
-  if (!mainWindow || mainWindow.isDestroyed() || loadingView) return;
+  if (!mainWindow || mainWindow.isDestroyed() || loadingView) {
+    // Already up: a second connect attempt reuses the same cover, so the ticker
+    // has to be (re)started here rather than only where the view is built.
+    if (loadingView) startProgressTicker();
+    return;
+  }
   loadingView = new WebContentsView({
     webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
@@ -1038,10 +1179,12 @@ function showLoadingCover() {
   // takes. Revealing on it turns "the app is invisible for four seconds and
   // then shows an error" into "the app opens, and it is loading".
   wc.once('dom-ready', revealMainWindow);
+  startProgressTicker();
   layoutViews();
 }
 
 function hideLoadingCover() {
+  stopProgressTicker();
   if (!loadingView) return;
   const view = loadingView;
   // Cleared first: removing the view can throw if the window is already going,
@@ -1112,66 +1255,44 @@ function refreshBanner() {
   if (!bannerView.webContents.isDestroyed()) bannerView.webContents.send('app:notices-changed');
 }
 
-function setNotice(id, notice) {
+// Notices that take themselves down again, by id.
+const noticeTimers = new Map();
+
+/**
+ * Raise a notice, optionally for a fixed time.
+ *
+ * Almost every notice is a standing condition and stays until whoever raised it
+ * says otherwise — that is the shape of the thing. `ttlMs` is for the handful
+ * that are not: the answer to a manual "check for updates", which is a reply to
+ * a question rather than a problem, and would otherwise sit there permanently
+ * announcing that nothing is wrong.
+ *
+ * The timer lives here rather than in the store so src/notices.js stays a pure
+ * data structure with no clock in it.
+ */
+function setNotice(id, notice, ttlMs = 0) {
+  const existing = noticeTimers.get(id);
+  if (existing) {
+    clearTimeout(existing);
+    noticeTimers.delete(id);
+  }
   if (notices.set(id, notice)) refreshBanner();
+  if (ttlMs > 0) {
+    const timer = setTimeout(() => clearNotice(id), ttlMs);
+    // Never a reason to hold the process open: an app whose last act is waiting
+    // to take down a banner nobody is looking at should just quit.
+    if (typeof timer.unref === 'function') timer.unref();
+    noticeTimers.set(id, timer);
+  }
 }
 
 function clearNotice(id) {
-  if (notices.clear(id)) refreshBanner();
-}
-
-/* ------------------------------------------------------------ message modal */
-
-// Anything that used to be dialog.showMessageBox(). Same shape in and out — a
-// message, a detail, a list of buttons, a resolved `{ response }` index — so
-// the call sites read the same and only the pixels changed.
-let currentMessage = null;
-const messageQueue = [];
-
-/**
- * Show one of the app's own message dialogs and resolve with the button index.
- *
- * Queued rather than concurrent: two of these on screen at once would be two
- * scrims dimming each other, and the native dialogs this replaces serialised
- * too. The window is brought forward first, because an overlay inside a hidden
- * window is a dialog nobody can answer — and this app spends most of its life
- * closed to the tray.
- *
- * @param {{message: string, detail?: string, kind?: string, buttons?: string[],
- *          defaultId?: number, cancelId?: number}} spec
- * @returns {Promise<{response: number}>}
- */
-function showMessage(spec) {
-  return new Promise((resolve) => {
-    messageQueue.push({ spec, resolve });
-    pumpMessages();
-  });
-}
-
-/** Resolve the open message. `null` means it was dismissed rather than answered. */
-function settleMessage(response) {
-  const pending = currentMessage;
-  if (!pending) return;
-  currentMessage = null;
-  const cancel = Number.isInteger(pending.spec.cancelId) ? pending.spec.cancelId : 0;
-  pending.resolve({ response: response === null ? cancel : response });
-}
-
-function pumpMessages() {
-  if (currentMessage) return;
-  // Settled already, so this closes an empty shell rather than cancelling
-  // anything — and it guarantees the next message gets a page that reads its
-  // own state fresh on load, with no need to push an update into a live one.
-  closeOverlay('message');
-  const next = messageQueue.shift();
-  if (!next) return;
-  currentMessage = next;
-  showMainWindow();
-  if (!openOverlay('message')) {
-    // No window to lay it over, so there is nothing to answer with.
-    settleMessage(null);
-    pumpMessages();
+  const timer = noticeTimers.get(id);
+  if (timer) {
+    clearTimeout(timer);
+    noticeTimers.delete(id);
   }
+  if (notices.clear(id)) refreshBanner();
 }
 
 /**
@@ -1304,16 +1425,23 @@ function initUpdates() {
     // a rate limit must not interrupt whatever the user was doing to say so.
     console.error(`[claw] update check failed: ${err && err.message}`);
     setLastCheck('check failed');
-    if (pendingManualCheck) {
-      pendingManualCheck = false;
-      void showMessage({ kind: 'warning', message: 'Could not check for updates.', detail: String((err && err.message) || err), buttons: ['OK'] });
-    }
+    if (!pendingManualCheck) return;
+    pendingManualCheck = false;
+    setNotice(UPDATE_ANSWER, {
+      tone: noticeStore.WARN,
+      message: 'Could not check for updates.',
+      detail: noticeStore.sentence((err && err.message) || err),
+    }, ANSWER_TTL_MS);
   });
   updater.on('update-not-available', () => {
     setLastCheck('up to date');
     if (!pendingManualCheck) return;
     pendingManualCheck = false;
-    void showMessage({ message: 'Claw Desktop is up to date.', detail: `You are on ${app.getVersion()}.`, buttons: ['OK'] });
+    setNotice(UPDATE_ANSWER, {
+      tone: noticeStore.OK,
+      message: 'Claw Desktop is up to date.',
+      detail: `You are on ${app.getVersion()}.`,
+    }, ANSWER_TTL_MS);
   });
 
   const every = updates.checkIntervalMs(app.getVersion());
@@ -1323,6 +1451,18 @@ function initUpdates() {
 }
 
 let pendingManualCheck = false;
+// The version an 'update-available' offered, held for the notice's action to
+// act on. A notice cannot carry a callback across IPC -- it names a command and
+// main looks it up -- so what the command operates on has to live here.
+let offeredUpdate = null;
+
+// One id for every answer to a manual check, so a second check replaces the
+// first rather than stacking a second "up to date" underneath it.
+const UPDATE_ANSWER = 'update-answer';
+// Long enough to read without hunting for it, short enough that an answer to a
+// question nobody is still asking takes itself away. Only ever used for a reply
+// to something the user pressed; a real problem has no timeout.
+const ANSWER_TTL_MS = 9000;
 
 /** Record how a check ended, and push it to an About box that is on screen. */
 function setLastCheck(result) {
@@ -1334,7 +1474,11 @@ async function checkForUpdates(trigger = 'manual') {
   if (!updater) {
     if (updates.shouldReportNoUpdate(trigger)) {
       const plan = updatePolicy();
-      void showMessage({ message: 'Updates are not available in this build.', detail: plan.reason, buttons: ['OK'] });
+      setNotice(UPDATE_ANSWER, {
+        tone: noticeStore.INFO,
+        message: 'Updates are not available in this build.',
+        detail: noticeStore.sentence(plan.reason),
+      }, ANSWER_TTL_MS);
     }
     return;
   }
@@ -1349,9 +1493,22 @@ async function checkForUpdates(trigger = 'manual') {
   }
 }
 
-async function onUpdateAvailable(info) {
+/**
+ * A new version exists and this build is not fetching it by itself.
+ *
+ * A notice rather than a dialog, and it is the case that shows why: a new
+ * release is not urgent, it is not an error, and it is true until acted on. As a
+ * dialog it stole focus from whatever was being typed, got dismissed, and left
+ * nothing on screen — so the app knew about a waiting update and had no way to
+ * say so until the next six-hourly check came round.
+ *
+ * "Later" is the dismiss button every notice already has. What is left is one
+ * offer, which is the shape a notice takes.
+ */
+function onUpdateAvailable(info) {
   const plan = updatePolicy();
   pendingManualCheck = false;
+  offeredUpdate = info;
   setLastCheck(`${info.version} available`);
   // Windows downloads in the background and speaks once it can actually offer
   // the restart, so there is nothing useful to say yet.
@@ -1361,55 +1518,73 @@ async function onUpdateAvailable(info) {
     action: plan.action, version: info.version, current: app.getVersion(), reason: plan.reason,
   });
 
-  // Two different offers, and saying the wrong one is worse than saying
-  // nothing: MANUAL means this build can install it and is waiting to be told,
-  // NOTIFY means it genuinely cannot and the release page is the only way on.
+  // Two different offers, and making the wrong one is worse than making none:
+  // MANUAL means this build can install it and is waiting to be told, NOTIFY
+  // means it genuinely cannot and the release page is the only way on.
   const canInstallNow = plan.action === updates.MANUAL;
-  const { response } = await showMessage({
+  // The answer to any manual check is superseded by this, which is a better
+  // answer to the same question.
+  clearNotice(UPDATE_ANSWER);
+  setNotice('update-available', {
+    tone: noticeStore.INFO,
     message,
     detail,
-    buttons: [canInstallNow ? 'Download and install' : 'Open release page', 'Later'],
-    defaultId: 0,
-    cancelId: 1,
+    action: canInstallNow
+      ? { label: 'Download and install', command: 'update-download' }
+      : { label: 'Open release page', command: 'update-release-page' },
   });
-  if (response !== 0) return;
-  if (!canInstallNow) {
-    await shell.openExternal(`${RELEASES_URL}/tag/v${info.version}`);
-    return;
-  }
+}
+
+/** The offer taken up: fetch it now, without touching the standing preference. */
+async function downloadOfferedUpdate() {
+  if (!updater || !offeredUpdate) return;
+  const version = offeredUpdate.version;
   // Straight to downloadUpdate rather than flipping autoDownload: this is a
   // one-off yes to this version, not a change to the preference.
-  setLastCheck(`downloading ${info.version}`);
+  setNotice('update-available', {
+    tone: noticeStore.INFO,
+    message: `Downloading Claw Desktop ${version}.`,
+    detail: 'This carries on in the background; you will be told when it is ready.',
+  });
+  setLastCheck(`downloading ${version}`);
   try {
     await updater.downloadUpdate();
   } catch (err) {
     setLastCheck('download failed');
-    setNotice('update-download', {
+    setNotice('update-available', {
       tone: noticeStore.WARN,
-      message: `Could not download Claw Desktop ${info.version}.`,
+      message: `Could not download Claw Desktop ${version}.`,
       detail: `${noticeStore.sentence((err && err.message) || err)} It will try again at the next check.`,
     });
   }
 }
 
-async function onUpdateDownloaded(info) {
+function onUpdateDownloaded(info) {
   updateReady = info.version;
-  clearNotice('update-download');
+  offeredUpdate = info;
+  clearNotice(UPDATE_ANSWER);
   setLastCheck(`${info.version} downloaded, restart to apply`);
-  buildTray(); // so "Restart to update" appears without waiting for the dialog
-  const { response } = await showMessage({
+  buildTray(); // so "Restart to update" appears in the tray as well
+  // Not dismissible. Every other notice can be waved away because the condition
+  // it describes carries on regardless and the app can raise it again; this one
+  // is the only route to a restart that is already paid for, and losing it means
+  // waiting for the next check to find the same version again.
+  setNotice('update-available', {
+    tone: noticeStore.OK,
     message: `Claw Desktop ${info.version} is ready.`,
-    detail: 'Restart to finish updating. You can also keep working and restart later.',
-    buttons: ['Restart now', 'Later'],
-    defaultId: 0,
-    cancelId: 1,
+    detail: 'Restart to finish updating, or keep working and restart later.',
+    dismissible: false,
+    action: { label: 'Restart now', command: 'update-restart' },
   });
-  if (response === 0) {
-    quitting = true;
-    // isSilent false so the installer's progress is visible; isForceRunAfter so
-    // the app comes back rather than leaving the user staring at a closed window.
-    updater.quitAndInstall(false, true);
-  }
+}
+
+/** Take the restart. */
+function restartForUpdate() {
+  if (!updater || !updateReady) return;
+  quitting = true;
+  // isSilent false so the installer's progress is visible; isForceRunAfter so
+  // the app comes back rather than leaving the user staring at a closed window.
+  updater.quitAndInstall(false, true);
 }
 
 /**
@@ -1743,7 +1918,17 @@ function currentState() {
     activeGatewayId: cfg.activeGatewayId,
     // The active connection as one field, for the loading cover, which asks
     // "still trying, or stopped?" and has no gateway row to read it out of.
-    connection: { gatewayId: connection.gatewayId, phase: connection.phase },
+    //
+    // The milestone travels as the stage plus the wall-clock time it landed,
+    // not as a percentage. The cover animates between stages on its own frame
+    // clock; pushing a number would mean an IPC message per frame to move a
+    // progress bar.
+    connection: {
+      gatewayId: connection.gatewayId,
+      phase: connection.phase,
+      milestone: connection.milestone,
+      milestoneAt: connection.milestoneAt,
+    },
     secretsAvailable: secrets.available(),
     frameless: chrome.enabled(),
     secretsError: secrets.unavailableReason(),
@@ -1885,20 +2070,31 @@ function registerIpc() {
   // ever reach a command that was written here — the renderer names it, it does
   // not describe it, and an unknown name is nothing rather than an error.
   ipcMain.handle('app:notice-action', (_e, command) => {
-    const commands = { settings: () => openSettings(), reconnect: () => loadActiveGateway() };
+    const commands = {
+      settings: () => openSettings(),
+      reconnect: () => loadActiveGateway(),
+      // Get out of the way and show what is already loaded behind. Also clears
+      // the notice: unlike every other one here, this condition is *answered* by
+      // taking the offer rather than merely acted on.
+      'open-ui': () => { closeSettings(); clearNotice('connected'); },
+      'update-download': () => { void downloadOfferedUpdate(); },
+      'update-release-page': () => {
+        const v = offeredUpdate && offeredUpdate.version;
+        void shell.openExternal(v ? `${RELEASES_URL}/tag/v${v}` : RELEASES_URL);
+      },
+      'update-restart': () => restartForUpdate(),
+    };
     const run = commands[String(command)];
     if (run) run();
   });
   // The loading cover's Try again, which is the same act as the menu's
   // Reconnect and goes to the same place.
   ipcMain.handle('app:reconnect', () => { loadActiveGateway(); });
-
-  ipcMain.handle('app:message', () => (currentMessage ? currentMessage.spec : null));
-  ipcMain.handle('app:message-respond', (_e, index) => {
-    settleMessage(Number.isInteger(index) ? index : null);
-    closeOverlay('message');
-    pumpMessages();
-  });
+  // What the cover asks for on load. There is a push too, but the first value
+  // has to be pulled: the page can finish loading between two ticks, and a bar
+  // that starts at zero and jumps on the next tick is worse than one that opens
+  // where the load actually is.
+  ipcMain.handle('app:progress', () => progressNow());
 
   // Synchronous, and only because the caller is a sandboxed preload that cannot
   // require src/chrome.js. Serving the list from its one owner beats keeping a

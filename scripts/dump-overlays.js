@@ -15,9 +15,11 @@
 //
 //   npx electron scripts/dump-overlays.js [--out DIR]
 //
-// The app will fail to reach a gateway and show its error page. That is fine
-// and deliberate: the overlays are what is being looked at, and they sit on top
-// of whatever the window is showing.
+// The app will fail to reach its first gateway and raise a notice about it.
+// That is fine and deliberate: the banner and the overlays are what is being
+// looked at, and they sit on top of whatever the window is showing. A second,
+// deliberately slow gateway is started here so the loading bar can be caught
+// while it is still moving.
 //
 // One number in the output is this harness's own and not the app's: Electron
 // takes the app path from the entry file's directory, so `app.getVersion()`
@@ -34,12 +36,29 @@ const { app, Menu, webContents } = require('electron');
 const PROFILE = fs.mkdtempSync(path.join(os.tmpdir(), 'claw-overlays-'));
 app.setPath('userData', PROFILE);
 
+// A real server that accepts the connection and then sits on it before
+// answering. It is what makes the loading cover's progress bar observable at
+// all: against a refused port the whole connect fails in milliseconds, so the
+// bar only ever exists in its frozen, failed state and the part that moves is
+// never seen. Holding the request produces a genuine, long CONNECTING phase —
+// the same one a sleeping tailnet gateway produces — without faking any of it.
+const HOLD_MS = 5000;
+const slowGateway = require('node:http').createServer((_req, res) => {
+  setTimeout(() => {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end('<!doctype html><title>Slow gateway</title><body>connected');
+  }, HOLD_MS);
+});
+
 // Seeded with a gateway that cannot answer, which is the state being aimed for
 // rather than a shortcut. An empty profile is a *first run*, and on a first run
 // Settings is the window's own content rather than a modal over it — so the
 // overlay path, the one being checked, is the one that never runs.
 fs.writeFileSync(path.join(PROFILE, 'config.json'), `${JSON.stringify({
-  gateways: [{ id: 'harness', label: 'Harness', url: 'http://127.0.0.1:18789/' }],
+  gateways: [
+    { id: 'harness', label: 'Harness', url: 'http://127.0.0.1:18789/' },
+    { id: 'slow', label: 'Slow gateway', url: 'http://127.0.0.1:18790/' },
+  ],
   activeGatewayId: 'harness',
 }, null, 2)}\n`);
 
@@ -100,6 +119,7 @@ async function capture(file, name) {
 
 app.whenReady().then(async () => {
   fs.mkdirSync(OUT, { recursive: true });
+  slowGateway.listen(18790, '127.0.0.1');
   // Long enough for the window, its child views and the first (failing) gateway
   // load to settle, so a capture is never racing a page that is still painting.
   await delay(6000);
@@ -114,13 +134,19 @@ app.whenReady().then(async () => {
       file: 'about.html',
       expect: [/Claw Desktop/, /Updates:/, /Check for updates/, /Electron/],
     },
-    // Reaches the message dialog through the real update path: a source build
-    // has no updater, and a manual check is the one trigger that says so.
+    // The banner, reached through the real update path: a source build has no
+    // updater, and a manual check is the one trigger that says so. It is a
+    // notice now rather than a modal, so this also proves the banner can carry
+    // an answer to something the user pressed and not only a standing fault —
+    // the failed connection's own notice is up alongside it.
     {
-      name: 'message',
+      name: 'banner',
       click: 'Check for updates…',
-      file: 'message.html',
-      expect: [/Updates are not available in this build/, /running from source/, /OK/],
+      file: 'banner.html',
+      // Case-insensitive on the reason: it is written to be appended to a
+      // sentence, and the banner capitalises it to stand on its own.
+      expect: [/Updates are not available in this build/, /running from source/i,
+        /Cannot connect to Harness/, /Open Settings/],
     },
     {
       name: 'settings',
@@ -158,22 +184,24 @@ app.whenReady().then(async () => {
     }
   }
 
-  // Answering a message dialog. This is the half that replaced the native
-  // dialog's return value, and its failure mode is the quiet one: a button
-  // that renders and does nothing leaves the caller in main.js awaiting a
-  // promise forever, with a sheet still over the window.
-  const message = overlayContents('message.html');
-  if (!message) {
-    console.error('FAIL message-answer: the dialog closed on its own');
+  // Dismissing a notice. The banner's ✕ is the only way a standing condition
+  // comes off the screen, and its failure mode is the quiet one: a button that
+  // renders and does nothing leaves a strip permanently over the window, in a
+  // view that eats every click inside its bounds.
+  const banner = overlayContents('banner.html');
+  if (!banner) {
+    console.error('FAIL notice-dismiss: the banner is not up');
     failed = true;
   } else {
-    await message.executeJavaScript('document.querySelector("#buttons button").click()');
+    const before = await banner.executeJavaScript('document.querySelectorAll(".banner").length');
+    await banner.executeJavaScript('document.querySelector(".banner__close").click()');
     await delay(800);
-    if (overlayContents('message.html')) {
-      console.error('FAIL message-answer: still open after its button was clicked');
+    const after = await banner.executeJavaScript('document.querySelectorAll(".banner").length').catch(() => 0);
+    if (after >= before) {
+      console.error(`FAIL notice-dismiss: ${before} notices before, ${after} after`);
       failed = true;
     } else {
-      console.log('OK   message-answer -> dialog answered and torn down');
+      console.log(`OK   notice-dismiss -> ${before} notices, ${after} after the ✕`);
     }
   }
 
@@ -209,6 +237,86 @@ app.whenReady().then(async () => {
     }
   }
 
+  // The loading cover while something is genuinely in flight, and then the way
+  // out of Settings once it lands. Both need a gateway that takes its time:
+  // against the refused port the bar only ever exists frozen, and a connect
+  // that completes before the capture proves nothing about what was on screen
+  // during it.
+  if (!settings) {
+    console.error('FAIL loading: settings overlay is gone, cannot start a slow connect');
+    failed = true;
+  } else {
+    // The Connect button of the gateway that is *not* active — the active one
+    // reads "Reconnect", so an exact match picks the slow one without needing
+    // to know the order the rows rendered in.
+    const started = await settings.executeJavaScript(`(() => {
+      const b = [...document.querySelectorAll('button')].find((x) => x.textContent.trim() === 'Connect');
+      if (!b) return false;
+      b.click();
+      return true;
+    })()`);
+    if (!started) {
+      console.error('FAIL loading: no Connect button for the slow gateway');
+      failed = true;
+    } else {
+      // Comfortably inside the hold, so the connect is still open.
+      await delay(2000);
+      try {
+        const { image, text } = await capture('loading.html', 'loading');
+        // A percentage, strictly between the ends: 0 would mean nothing was
+        // reported and 100 would mean it claimed a load that has not finished.
+        const shown = /(\d+)%/.exec(text);
+        const percent = shown ? Number(shown[1]) : null;
+        const missing = [/Connecting/, /Slow gateway/, /%/].filter((re) => !re.test(text));
+        if (missing.length) {
+          console.error(`FAIL loading: rendered without ${missing.join(', ')}`);
+          failed = true;
+        } else if (percent === null || percent <= 0 || percent >= 100) {
+          console.error(`FAIL loading: bar reads ${shown ? shown[0] : 'nothing'} mid-connect`);
+          failed = true;
+        } else {
+          console.log(`OK   loading -> ${image} (bar at ${percent}%)`);
+        }
+        console.log(`     ${text.slice(0, 400)}`);
+      } catch (err) {
+        console.error(`FAIL loading: ${err.message}`);
+        failed = true;
+      }
+
+      // Now let it answer. The connect completes with Settings still open,
+      // which is the one case that used to need a card on the Settings page
+      // itself — it is a notice now, and only reachable because the banner
+      // draws above the overlays.
+      await delay(HOLD_MS + 2500);
+      const done = overlayContents('banner.html');
+      const text = done ? await done.executeJavaScript('document.body.innerText').catch(() => '') : '';
+      if (done) await capture('banner.html', 'banner-connected').catch(() => {});
+      // No composite screenshot of the notice sitting over Settings, and it is
+      // not for want of trying: `BrowserWindow.capturePage()` captures the
+      // window's *own* WebContents, and this window has none — it is child views
+      // all the way down. It returns an empty image rather than failing, so a
+      // shot taken that way is a zero-byte file next to a line reading OK.
+      // Position is asserted instead, in scripts/test-connection-failure.js:
+      // the banner's top edge is inside the first 40px while Settings is open.
+      if (!/Open it/.test(text) || !/Slow gateway/.test(text)) {
+        console.error(`FAIL connected-notice: banner reads ${JSON.stringify(text.slice(0, 200))}`);
+        failed = true;
+      } else {
+        console.log('OK   connected-notice -> banner offers "Open it" over the Settings modal');
+        // And the offer works: taking it closes Settings and clears the notice.
+        await done.executeJavaScript('document.querySelector(".banner__action").click()');
+        await delay(1000);
+        if (overlayContents('settings.html')) {
+          console.error('FAIL connected-notice: "Open it" left Settings open');
+          failed = true;
+        } else {
+          console.log('OK   open-it -> Settings closed, the Control UI is in front');
+        }
+      }
+    }
+  }
+
+  slowGateway.close();
   fs.rmSync(PROFILE, { recursive: true, force: true });
   app.exit(failed ? 1 : 0);
 });

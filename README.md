@@ -206,12 +206,33 @@ you then had to get back out of, when it is a condition that is either true or
 not. The notice stays until the gateway answers or you dismiss it.
 
 **Behind it the window shows the loading screen** it was already showing while
-the connect was in flight — the app's mark, the gateway it is reaching for, and
-a ring that stops and turns red when the attempt does, with a **Try again**. It
+the connect was in flight — the app's mark, the gateway it is reaching for, a
+progress bar with a percentage, and a ring that stops and turns red when the
+attempt does, with a **Try again**. It
 is a view of its own laid over the page, so the gateway's document loads, or
 fails, underneath it untouched, and a successful connect is that view going
 away. The reason for the failure appears only in the notice: saying it in both
 places would be two wordings of one failure, free to drift apart.
+
+**The progress bar reports stages, not guesses.** Chromium will say that a
+navigation committed and that the document parsed, and nothing at all about the
+distance between them, so a bar driven only by those events sits still for four
+seconds and then jumps — which reads as frozen. Each stage instead sets a floor,
+and time eases the number toward the next one without ever reaching it: the
+event moves it on, the clock only stops it looking dead. So the number can be
+behind and it can crawl, but it cannot claim a stage the load has not reached,
+and **100% is reserved for a load that finished** — which is also the moment the
+screen goes away. A failure freezes it where it got to, because "the host never
+answered" and "the page loaded and then died" are different problems and the bar
+is the only thing on screen that tells them apart.
+
+The line beside it is a joke, rotating every few seconds. It is there because
+the wait is the honest problem — a sleeping tailnet gateway can hold this screen
+for the better part of a minute — and a line that changes says the app is still
+running. [test/quips.test.js](test/quips.test.js) asserts that none of them
+reads as a status message: a fake "Verifying certificates…" next to a real
+progress bar is a lie told in the one place someone is looking for a reason
+their app will not open.
 
 Every gateway row still carries its own status: **Connected**, **Connecting…**,
 **Cannot connect** with the reason in words and Chromium's error string beside
@@ -219,13 +240,28 @@ it, or **Certificate not trusted**. The badge used to read "Connected" for
 whichever gateway was merely *selected*, which was wrong for exactly as long as
 a connection was failing.
 
-**Everything else slides down from the top and stays until it is fixed.**
+**Everything else slides down from the top too, and stays until it is fixed.**
 Credentials that cannot be stored on this machine, a global shortcut the OS
-refused, an update that would not download. None of them is a question, so none
-of them is a dialog: a dialog interrupts, gets dismissed, and the condition is
-still true afterwards with nothing on screen to say so. A notice is keyed by
-condition rather than by occurrence, so raising it twice does not stack it, and
-whatever raised it clears it when it passes.
+refused, an update waiting to be installed, the answer to a **Check for
+updates**, and the "loaded and waiting behind this page" that follows a
+**Connect** pressed in Settings. None of them is a question, so none of them is
+a dialog: a dialog interrupts, gets dismissed, and the condition is still true
+afterwards with nothing on screen to say so. A notice is keyed by condition
+rather than by occurrence, so raising it twice does not stack it, and whatever
+raised it clears it when it passes.
+
+The stripe down the left says which kind it is: red for a failure, amber for a
+warning, green for good news, grey for the rest. Green is a tone of its own
+rather than "info" because this app's accent colour *is* red — an accent-edged
+notice is indistinguishable from a failure at the glance the stripe exists for.
+
+The banner draws **above the modals**, and that is what lets it be the app's one
+voice. Underneath them, anything raised while Settings was open was drawn behind
+it, which is why those messages used to be two dialogs and a card on the Settings
+page — three shapes for one job, because the one shape did not work from
+everywhere. It costs the top of a modal while a notice is up, which is the right
+way round: the modal is a page you opened, the notice is the app telling you
+something changed underneath it.
 
 The banner lives in a view sized to exactly the height the page reports, because
 an Electron view swallows every mouse event inside its bounds no matter what is
@@ -302,20 +338,27 @@ those same places, says which channel this build follows, what it does about a
 new version, and when it last looked. Updating is otherwise invisible, which is
 a fair reason to doubt it is happening at all.
 
-Every dialog in the app, About included, is one of its own pages laid over the
-window — never `dialog.showMessageBox`, never Electron's `role: 'about'` panel,
-no exceptions. A native message box is a different dialog on each platform,
-takes its colours from the OS rather than from the Control UI theme the rest of
-the app tracks, and has room for nothing but a line of text and a row of
-buttons: not the commit a build came from, not a word about updating.
-[test/dialogs.test.js](test/dialogs.test.js) fails the build if one appears —
-it checks for the import, not just the call.
+The app opens no message dialogs at all, native or otherwise. Everything it
+once interrupted with — "up to date", "a new version is available", "restart to
+finish updating" — is a notice in the banner, because none of them was ever a
+question: a release that exists carries on existing after the box is dismissed.
+The two overlay pages left are Settings and About, both of them places you go
+rather than things that appear in front of you.
+
+Neither is a native panel: never `dialog.showMessageBox`, never Electron's
+`role: 'about'`. A native box is a different dialog on each platform, takes its
+colours from the OS rather than from the Control UI theme the rest of the app
+tracks, and has room for nothing but a line of text and a row of buttons — not
+the commit a build came from, not a word about updating.
+[test/dialogs.test.js](test/dialogs.test.js) fails the build if either comes
+back: it checks for the `dialog` import rather than the call, and for the
+message queue that used to serialise them.
 
 What it does with a release depends on the platform:
 
 | Platform | Behaviour | Why |
 |---|---|---|
-| **Windows** | Downloads in the background, then offers **Restart to update** — in a dialog and on the tray menu | `NsisUpdater` skips signature verification when the build has no `publisherName`, so an unsigned build updates normally |
+| **Windows** | Downloads in the background, then offers **Restart to update** — in the banner and on the tray menu | `NsisUpdater` skips signature verification when the build has no `publisherName`, so an unsigned build updates normally |
 | **macOS** | Same as Windows | `MacUpdater` hands off to native Squirrel.Mac, which requires a valid signature on the running bundle. Releases are signed with a Developer ID, so it can install |
 | **Linux**, run as an AppImage | Same as Windows | `AppImageUpdater` overwrites the `.AppImage` the process was started from — no signature, no package manager, no root |
 | **Linux**, run any other way | Does not check, and says why | Without `APPIMAGE` in the environment there is no file to replace, and `isUpdaterActive()` returns false: every check would resolve to nothing, silently |
@@ -468,14 +511,16 @@ src/defaults.js      suggested gateways and defaults  ← edit for a new machine
 src/preload.js       narrow IPC bridge, exposed to local pages only
 src/connection.js    what each gateway row says: phase, error, certificate
 src/notices.js       the banner's store: conditions that stay until they resolve
-src/ui/              the app's own pages: settings, about, message, banner
+src/progress.js      the loading bar's curve: milestones, eased between
+src/quips.js         the rotating line under the loading bar
+src/ui/              the app's own pages: settings, about, banner, loading
 scripts/build-info.js    stamps the commit in at pack time (beforePack hook)
 scripts/version.js       CI build versioning + tag/package.json agreement
 scripts/build-version.js decides the version a CI build carries
 scripts/build.js         runs a build under the version the tree deserves
 scripts/make-icons.mjs   regenerates the icon PNGs from the SVG artwork
 scripts/dump-menu.js     dumps the resolved menu bar, to diff across platforms
-scripts/dump-overlays.js opens each of the app's own dialogs and checks it rendered
+scripts/dump-overlays.js opens each of the app's own pages and checks it rendered
 scripts/test-banner.js   raises a real condition and checks the banner's geometry
 scripts/test-cert-trust.js runs the refuse -> Settings -> trust -> connected loop for real
 scripts/test-connection-failure.js walks connecting -> failed -> recovered against real sockets

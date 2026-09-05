@@ -219,7 +219,16 @@ app.whenReady().then(async () => {
   await delay(3000);
 
   check('a successful reconnect takes the cover away', !pageNamed('loading.html'), 'the cover is still up');
-  check('and clears the notice with it', !pageNamed('banner.html'), 'the failure notice is still on screen');
+  // The failure notice is gone, but the banner itself is not: the connect
+  // landed with Settings open, so the app now has something else to say there —
+  // "loaded and waiting behind this page", checked further down. So this asks
+  // what is *in* the banner rather than whether it exists.
+  const afterRecovery = pageNamed('banner.html');
+  const stillFailing = afterRecovery
+    ? await afterRecovery.executeJavaScript('document.body.innerText').catch(() => '')
+    : '';
+  check('and clears the failure notice with it', !/Cannot connect/.test(stillFailing),
+    `the failure notice is still on screen: ${stillFailing.slice(0, 120)}`);
   const served = live().find((wc) => wc.getURL().startsWith('http://127.0.0.1:18791'));
   check('leaving the gateway on screen', Boolean(served), 'no view is showing the gateway');
 
@@ -249,16 +258,28 @@ app.whenReady().then(async () => {
     check('and the button reports it rather than going quiet',
       during.label === 'Connecting…' && during.disabled === true, JSON.stringify(during));
 
+    // The answer arrives in the banner rather than on the page that asked, which
+    // is only possible because the banner's view draws above the overlays. It
+    // used to be a card inside Settings, on the reasoning that an answer has to
+    // appear where the question was asked -- and that reasoning cost the app a
+    // third shape for saying something.
     await delay(4500);
-    const ready = await open.executeJavaScript(
-      '(() => { const c = document.querySelector("#ready .card, #ready > .ready");'
-      + ' return c ? c.innerText.replace(/\\s+/g, " ").trim() : null; })()',
-    );
-    check('when it lands, Settings says the UI is ready', Boolean(ready) && /Connected to/.test(ready), String(ready));
+    const answer = pageNamed('banner.html');
+    const ready = answer
+      ? await answer.executeJavaScript('document.body.innerText.replace(/\\s+/g, " ").trim()').catch(() => null)
+      : null;
+    check('when it lands, the banner says the UI is ready', Boolean(ready) && /Connected to/.test(ready), String(ready));
     check('and offers the way through to it', /Open it/.test(ready || ''), String(ready));
-    await shoot(open, 'connect-ready.png');
+    // Over the top of Settings, not behind it: a notice drawn under the modal it
+    // is answering is a notice nobody can see.
+    const overTheModal = answer
+      ? await answer.executeJavaScript('document.querySelector(".banner").getBoundingClientRect().top').catch(() => -1)
+      : -1;
+    check('drawn over the Settings modal rather than behind it', overTheModal >= 0 && overTheModal < 40,
+      `top: ${overTheModal}`);
+    await shoot(answer, 'connect-ready.png');
 
-    await open.executeJavaScript('[...document.querySelectorAll("#ready button")].find((b) => /Open it/.test(b.textContent)).click()');
+    await answer.executeJavaScript('document.querySelector(".banner__action").click()');
     await delay(1500);
     check('following that closes Settings', !pageNamed('settings.html'), 'settings is still open');
     check('leaving the Control UI on screen',

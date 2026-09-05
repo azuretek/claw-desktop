@@ -142,3 +142,18 @@ test('a failure with no gateway and no error still reads as a sentence', () => {
   assert.equal(n.message, 'Cannot connect to the gateway');
   assert.equal(n.detail, 'The gateway did not respond.');
 });
+
+test('an unrecognised failure is stated once, not echoed back to itself', () => {
+  // Chromium has far more error strings than the hint list, and for one that is
+  // missing the hint already falls back to the description. Appending it as
+  // well produced "ERR_EMPTY_RESPONSE (ERR_EMPTY_RESPONSE)", which reads as a
+  // bug in the app at the moment the reader is diagnosing their network.
+  const said = connection.reason({ code: -324, description: 'ERR_EMPTY_RESPONSE' });
+  assert.equal(said, 'ERR_EMPTY_RESPONSE');
+});
+
+test('a recognised failure still carries the code for the search box', () => {
+  const said = connection.reason({ code: -105, description: 'ERR_NAME_NOT_RESOLVED' });
+  assert.match(said, /Tailscale/, 'lost the hint');
+  assert.match(said, /\(ERR_NAME_NOT_RESOLVED\)/, 'lost the searchable code');
+});

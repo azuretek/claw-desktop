@@ -30,8 +30,8 @@ if (isLocalPage) {
     openSettings: () => ipcRenderer.invoke('app:open-settings'),
     closeSettings: () => ipcRenderer.invoke('app:close-settings'),
 
-    /* The app's own dialogs, in place of native ones. See the overlay section
-       in src/main.js for why none of these is a dialog.showMessageBox. */
+    /* The app's own pages, in place of native ones. See the overlay section in
+       src/main.js for why nothing here is a dialog.showMessageBox. */
     closeOverlay: (name) => ipcRenderer.invoke('app:close-overlay', name),
     about: () => ipcRenderer.invoke('app:about'),
     checkUpdates: () => ipcRenderer.invoke('app:check-updates'),
@@ -51,10 +51,12 @@ if (isLocalPage) {
     // so the page can ask for what it was offered and nothing else.
     noticeAction: (command) => ipcRenderer.invoke('app:notice-action', command),
     onNoticesChanged: (fn) => ipcRenderer.on('app:notices-changed', () => fn()),
-    // The loading cover, shown while connecting and after a failure.
+    // The loading cover, shown while connecting and after a failure. The bar and
+    // its line are computed in main and pushed — see the progress section in
+    // src/main.js for why the page is not given the curve to run itself.
     reconnect: () => ipcRenderer.invoke('app:reconnect'),
-    message: () => ipcRenderer.invoke('app:message'),
-    respondToMessage: (index) => ipcRenderer.invoke('app:message-respond', index),
+    progress: () => ipcRenderer.invoke('app:progress'),
+    onProgress: (fn) => ipcRenderer.on('app:progress', (_event, value) => fn(value)),
   });
 }
 

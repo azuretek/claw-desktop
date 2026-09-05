@@ -48,10 +48,18 @@ function hint({ code, description } = {}) {
  * Both halves of a failure: the sentence for the reader, the code for the
  * search box. Shared by the gateway row and the banner so the two cannot end up
  * describing the same failure differently.
+ *
+ * The code is appended only when there is a *hint* to append it to. Chromium
+ * has far more error strings than the list above, and for one that is not in it
+ * `hint()` already falls back to the description — so appending it as well
+ * produced "ERR_EMPTY_RESPONSE (ERR_EMPTY_RESPONSE)", which reads as a bug in
+ * the app at the moment the reader is trying to diagnose their network.
  */
 function reason(error) {
   if (!error) return hint();
-  return `${hint(error)}${error.description ? ` (${error.description})` : ''}`;
+  const sentence = hint(error);
+  if (!error.description || sentence === error.description) return sentence;
+  return `${sentence} (${error.description})`;
 }
 
 /**
