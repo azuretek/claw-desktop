@@ -66,6 +66,15 @@ reason. Both architectures of a given platform do cross-build fine.
   self-contained executable; it appears in the applications menu only if you add
   it there yourself.
 
+- **First launch after moving to a signed build** — macOS asks for your login
+  keychain password once, for *Claw Desktop Safe Storage*. Saved gateway
+  credentials are encrypted with Electron `safeStorage`, and that keychain item's
+  access control is bound to the **code identity that created it**. A locally
+  built app is ad-hoc signed (`TeamIdentifier=not set`); a release is signed with
+  a Developer ID, so it is a different identity and macOS asks whether to let it
+  through. Click **Always Allow** once. Later signed releases share the same
+  identity and never ask again.
+
 - **Upgrading from the old *OpenClaw*-named build** — quit it first, then
   uninstall it: the `appId` changed, so the installer will not replace it. Your
   profile, credentials and paired device identity move across automatically on
