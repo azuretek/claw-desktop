@@ -239,8 +239,14 @@ function renderGateways() {
 function renderCertOffers() {
   const host = $('cert-offers');
   host.replaceChildren();
+  const offers = state.certOffers || [];
+  if (!offers.length) return;
 
-  for (const offer of state.certOffers || []) {
+  // Its own heading rather than the static one below, because this block sits
+  // above Gateways and only exists while something is waiting.
+  host.append(el('h2', { textContent: offers.length > 1 ? 'Certificates to review' : 'Certificate to review' }));
+
+  for (const offer of offers) {
     const out = el('div', { className: 'result' });
 
     // A first sighting is routine on a :18789 address. A *changed* fingerprint

@@ -200,7 +200,8 @@ body.first-run .modal { border-color: transparent; box-shadow: none; }
   overflow-y: auto;
   padding: 16px 22px 22px;
 }
-.modal__body > h2:first-child { margin-top: 4px; }
+.modal__body > h2:first-child,
+.modal__body > *:first-child > h2:first-child { margin-top: 4px; }
 
 /* ------------------------------------------------------------------- type */
 

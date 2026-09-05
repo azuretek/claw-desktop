@@ -11,6 +11,8 @@
 //
 //   npx electron scripts/test-cert-trust.js
 //
+//   npx electron scripts/test-cert-trust.js --shots /tmp/cert-flow   # and look at it
+//
 // Needs `openssl` on PATH to mint the throwaway certificate. Nothing is
 // committed: the key is generated per run into a temp directory and deleted.
 
@@ -69,9 +71,30 @@ function contentsFor(match) {
   return webContents.getAllWebContents().find((wc) => !wc.isDestroyed() && wc.getURL().includes(match));
 }
 
+const shotIndex = process.argv.indexOf('--shots');
+const SHOTS = shotIndex === -1 ? null : process.argv[shotIndex + 1];
+if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
+
+/**
+ * What a page is showing, as text, and optionally as a picture.
+ *
+ * The text is the assertion; `--shots` is for looking at it afterwards. They
+ * are not interchangeable — a card that renders empty because an element id was
+ * mistyped looks fine in a thumbnail — and `capturePage` needs a display
+ * surface, so it fails outright on a headless or locked machine. That must not
+ * be able to fail the run.
+ */
 async function textOf(match, what) {
   const wc = contentsFor(match);
   if (!wc) throw new Error(`${what}: nothing is showing ${match}`);
+  if (SHOTS) {
+    try {
+      const shot = await wc.capturePage();
+      fs.writeFileSync(path.join(SHOTS, `${what.replace(/[^a-z0-9]+/gi, '-')}.png`), shot.toPNG());
+    } catch (err) {
+      console.log(`     no screenshot of ${what} (${err.message})`);
+    }
+  }
   const text = await wc.executeJavaScript('document.body.innerText');
   return text.replace(/\s*\n+\s*/g, ' | ').trim();
 }

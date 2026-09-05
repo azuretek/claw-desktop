@@ -28,6 +28,12 @@
       </header>
       <div class="modal__body">
 
+  <!-- Above everything, and empty almost always. A refused certificate is the
+       reason this page was opened at all when there is one — the error page
+       sends you straight here — so it must not sit below Gateways and
+       Behaviour, where you would have to go looking for it. -->
+  <div id="cert-offers"></div>
+
   <h2>Gateways</h2>
   <div id="gateways"></div>
 
@@ -93,11 +99,7 @@
       </div>
     </div>
 
-    <h2>Certificates</h2>
-    <!-- Anything refused this session lands here, above the ones already
-         trusted. This is where the old native prompt went; see src/certs.js
-         for why the decision is a page and not a dialog. -->
-    <div id="cert-offers"></div>
+    <h2>Trusted certificates</h2>
     <div id="certs"></div>
   </section>
 
