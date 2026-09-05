@@ -202,9 +202,16 @@ app.whenReady().then(async () => {
   // down leaves the app permanently showing a loading screen over a working
   // gateway, and nothing on screen would explain it. So the gateway starts
   // answering and the same window has to come back on its own.
+  // Answers immediately by default. The delay is turned up later so the
+  // connecting state can be observed rather than raced: a localhost server
+  // replies in single-digit milliseconds, which is faster than any assertion
+  // can be scheduled against it.
+  let responseDelay = 0;
   const server = http.createServer((_req, res) => {
-    res.writeHead(200, { 'content-type': 'text/html' });
-    res.end('<!doctype html><title>Gateway</title><h1 id="served">served</h1>');
+    setTimeout(() => {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<!doctype html><title>Gateway</title><h1 id="served">served</h1>');
+    }, responseDelay);
   });
   await new Promise((resolve) => server.listen(18791, '127.0.0.1', resolve));
 
@@ -217,6 +224,47 @@ app.whenReady().then(async () => {
   check('leaving the gateway on screen', Boolean(served), 'no view is showing the gateway');
 
   await shoot(pageNamed('settings.html') || served, 'connection-recovered.png');
+
+  /* ------------------------------------------- pressing Connect in Settings */
+
+  // Connect used to close Settings the instant it was pressed, so the page went
+  // away before there was any answer to show in it and the next thing on screen
+  // was either the Control UI or a failure. It runs behind the page now, and
+  // leaving is a second, deliberate press.
+  const open = pageNamed('settings.html');
+  check('Settings is still open to press Connect in', Boolean(open), 'settings closed itself');
+  if (open) {
+    responseDelay = 2000;
+    await open.executeJavaScript(
+      '[...document.querySelectorAll("#gateways button")].find((b) => /^(Re)?[Cc]onnect$/.test(b.textContent)).click()',
+    );
+    // Mid-flight: the page is still here and the button says what is happening.
+    await delay(700);
+    const during = await open.executeJavaScript(
+      '(() => { const b = [...document.querySelectorAll("#gateways button")]'
+      + '.find((x) => /Connect/i.test(x.textContent));'
+      + ' return { label: b ? b.textContent : null, disabled: b ? b.disabled : null }; })()',
+    );
+    check('pressing Connect does not close Settings', Boolean(pageNamed('settings.html')), 'settings went away on press');
+    check('and the button reports it rather than going quiet',
+      during.label === 'Connecting…' && during.disabled === true, JSON.stringify(during));
+
+    await delay(4500);
+    const ready = await open.executeJavaScript(
+      '(() => { const c = document.querySelector("#ready .card, #ready > .ready");'
+      + ' return c ? c.innerText.replace(/\\s+/g, " ").trim() : null; })()',
+    );
+    check('when it lands, Settings says the UI is ready', Boolean(ready) && /Connected to/.test(ready), String(ready));
+    check('and offers the way through to it', /Open it/.test(ready || ''), String(ready));
+    await shoot(open, 'connect-ready.png');
+
+    await open.executeJavaScript('[...document.querySelectorAll("#ready button")].find((b) => /Open it/.test(b.textContent)).click()');
+    await delay(1500);
+    check('following that closes Settings', !pageNamed('settings.html'), 'settings is still open');
+    check('leaving the Control UI on screen',
+      Boolean(live().find((wc) => wc.getURL().startsWith('http://127.0.0.1:18791'))), 'the gateway is not showing');
+  }
+
   server.close();
 
   fs.rmSync(TMP, { recursive: true, force: true });

@@ -96,7 +96,11 @@ The setup window opens on first launch.
    The app supplies it on every connect, so the Control UI never asks you to
    paste anything.
 
-3. Press **Connect**.
+3. Press **Connect**. Settings stays where it is — the button reads
+   *Connecting…* while the gateway loads behind the page, and when it lands a
+   green strip appears at the top saying the Control UI is ready, with **Open
+   it**. If it fails instead, the row says why. Leaving the page is always a
+   second, deliberate press, never something that happens to you.
 
 **Which address to use.** Prefer the tailnet name
 (`https://<host>.<tailnet>.ts.net`, no port) — Tailscale Serve terminates a real

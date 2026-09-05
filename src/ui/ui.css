@@ -321,6 +321,23 @@ body.banner-body { background: transparent; overflow: hidden; }
 }
 .banner__close:hover { background: var(--bg-hover); color: var(--text-strong); }
 
+/* The one card on the page that is good news, and the only one that appears in
+   response to something rather than describing standing state. Tinted and
+   green-edged so it separates from the row of neutral cards below it, and slid
+   in from above like a notice, because it arrives while you are reading. */
+.ready {
+  border-color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 8%, var(--panel));
+  animation: ready-in .22s cubic-bezier(.2, .8, .3, 1) both;
+}
+@keyframes ready-in {
+  from { transform: translateY(-8px); opacity: 0; }
+  to   { transform: none; opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ready { animation: none; }
+}
+
 /* --------------------------------------------------------------- loading */
 
 /* The cover shown while there is no gateway page to show. Opaque `--bg`, not a

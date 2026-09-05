@@ -28,9 +28,15 @@
       </header>
       <div class="modal__body">
 
-  <!-- Above everything, and empty almost always. A refused certificate is the
-       reason this page was opened at all when there is one — the error page
-       sends you straight here — so it must not sit below Gateways and
+  <!-- The answer to a Connect pressed on this page: the gateway is loaded and
+       waiting behind here, and this is the way through to it. Empty until then,
+       and empty for a page opened over a gateway that was already connected —
+       nothing was asked there, so there is nothing to answer. See renderReady. -->
+  <div id="ready"></div>
+
+  <!-- Above everything else, and empty almost always. A refused certificate is
+       the reason this page was opened at all when there is one — the failure
+       notice links straight here — so it must not sit below Gateways and
        Behaviour, where you would have to go looking for it. -->
   <div id="cert-offers"></div>
 

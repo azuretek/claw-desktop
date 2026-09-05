@@ -1051,7 +1051,12 @@ function hideLoadingCover() {
   themeCssKeys.delete(view.webContents.id);
   try { mainWindow?.contentView.removeChildView(view); } catch { /* window already gone */ }
   try { if (!view.webContents.isDestroyed()) view.webContents.close(); } catch { /* already torn down */ }
-  page()?.focus();
+  // The gateway only takes focus if nothing of ours is in front of it. A
+  // connect started from Settings finishes with Settings still open, and typing
+  // into a page the user cannot see is worse than not moving focus at all.
+  const top = [...overlayViews.values()].filter((v) => !v.webContents.isDestroyed()).pop();
+  if (top) top.webContents.focus();
+  else page()?.focus();
 }
 
 /* ------------------------------------------------------------------ banner */
@@ -1836,9 +1841,14 @@ function registerIpc() {
     config.update({ trustedCerts });
     return currentState();
   });
+  // Connect starts the connection and nothing else. Closing Settings here used
+  // to be part of it, which meant the page vanished the instant you pressed the
+  // button and the next thing you saw was either the Control UI or a failure —
+  // with no moment in between that said which was coming. The connect runs
+  // behind the page instead, the row reports it, and leaving is a second,
+  // deliberate press once there is something to leave for.
   ipcMain.handle('app:connect', (_e, id) => {
     switchGateway(id);
-    closeSettings();
     return currentState();
   });
   ipcMain.handle('app:save-settings', (_e, patch) => {

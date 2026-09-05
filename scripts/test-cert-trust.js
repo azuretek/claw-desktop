@@ -118,11 +118,20 @@ app.whenReady().then(async () => {
   await new Promise((r) => server.listen(PORT, '127.0.0.1', r));
   await delay(6000);
 
-  /* 1. The connection is refused, and the app puts Settings back on screen
-        with the failure in it -- there is no separate error page any more. */
-  const settingsText = await textOf('settings.html', 'settings after the refusal');
-  check('a failed connection lands on Settings, saying why it is there',
-    /Cannot reach the gateway/.test(settingsText), settingsText.slice(0, 300));
+  /* 1. The connection is refused, and the app says so where it stands: a
+        notice down from the top carrying the link to the page that can fix it.
+        Nothing navigated on its own -- that is half the claim being made. */
+  const bannerText = await textOf('banner.html', 'the notice after the refusal');
+  check('a refused connection raises a notice rather than moving anyone',
+    /Cannot connect/i.test(bannerText) && !contentsFor('settings.html'),
+    `${bannerText.slice(0, 200)} | settings open: ${Boolean(contentsFor('settings.html'))}`);
+  check('and the notice carries the way to fix it', /Open Settings/.test(bannerText), bannerText.slice(0, 200));
+
+  /* 2. Following that link is what puts the certificate in front of you. */
+  await contentsFor('banner.html').executeJavaScript('document.querySelector(".banner__action").click()');
+  await delay(2500);
+
+  const settingsText = await textOf('settings.html', 'settings after following the link');
   check('Settings carries the refused certificate and its fingerprint',
     settingsText.includes(HOST) && /Trust this certificate/.test(settingsText) && /sha256\//.test(settingsText),
     settingsText.slice(0, 400));
@@ -182,8 +191,19 @@ app.whenReady().then(async () => {
   check('both fingerprints are shown, so they can be compared',
     /previously trusted/.test(changedText) && /now presenting/.test(changedText),
     changedText.slice(0, 400));
+  // Asserted on the *content* rather than on whether a view still holds that
+  // URL. It used to be the URL, which worked only because a failure navigated
+  // the page away to Settings; now that nothing navigates, the view keeps the
+  // address it failed on and that proxy answers the wrong question. What has to
+  // be true is that the impostor's bytes never rendered.
+  const impostorView = contentsFor(`https://${HOST}`);
+  const shown = impostorView ? await impostorView.executeJavaScript('document.body.innerText') : '';
   check('the impostor is not reached while the decision is pending',
-    !contentsFor(`https://${HOST}`), 'the new certificate was accepted without being trusted');
+    !/SHOULD NOT BE REACHED/.test(shown), `the page is showing: ${shown.slice(0, 200)}`);
+  // And it is not on screen either way: the loading cover is over it until a
+  // connection actually succeeds, so nothing stale is being read as current.
+  check('and nothing stale is left on screen behind the decision',
+    Boolean(contentsFor('loading.html')), 'no loading cover over the failed page');
 
   // Doing nothing has to be the safe outcome — the whole reason this is not a
   // modal whose easiest button is "yes".
