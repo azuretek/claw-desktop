@@ -29,23 +29,32 @@ test('the gateway this app is not pointed at never claims to be connected', () =
   assert.equal(s.label, 'Not connected');
 });
 
-test('a failure says what went wrong in words, and keeps the raw string', () => {
+test('a failed row says the state and leaves the reason to the banner', () => {
+  // Both used to print reason(error), so one failure read as two problems, and
+  // the copy in the row was the one that could not be dismissed or acted on.
   const s = active({ phase: connection.FAILED, error: { code: -109, description: 'ERR_ADDRESS_UNREACHABLE' } });
   assert.equal(s.tone, 'err');
   assert.equal(s.label, 'Cannot connect');
-  assert.match(s.detail, /same tailnet or LAN/, 'the hint someone can act on');
-  assert.match(s.detail, /ERR_ADDRESS_UNREACHABLE/, 'and the string they would search for');
+  assert.equal(s.detail, null);
+});
+
+test('the banner says what went wrong in words, and keeps the raw string', () => {
+  const n = connection.failureNotice({ label: 'home', error: { code: -109, description: 'ERR_ADDRESS_UNREACHABLE' } });
+  assert.equal(n.tone, 'error');
+  assert.match(n.message, /home/, 'which gateway, since the banner is not in the row');
+  assert.match(n.detail, /same tailnet or LAN/, 'the hint someone can act on');
+  assert.match(n.detail, /ERR_ADDRESS_UNREACHABLE/, 'and the string they would search for');
 });
 
 test('an unknown error code falls back to Chromium’s own description', () => {
-  const s = active({ phase: connection.FAILED, error: { code: -99999, description: 'ERR_SOMETHING_NEW' } });
-  assert.match(s.detail, /ERR_SOMETHING_NEW/);
+  const n = connection.failureNotice({ label: 'home', error: { code: -99999, description: 'ERR_SOMETHING_NEW' } });
+  assert.match(n.detail, /ERR_SOMETHING_NEW/);
 });
 
 test('a failure with no detail at all still says something', () => {
   // Reachable through render-process-gone, whose "code" is a word.
-  const s = active({ phase: connection.FAILED, error: null });
-  assert.ok(s.detail && s.detail.length > 10, s.detail);
+  const n = connection.failureNotice({ label: 'home', error: null });
+  assert.ok(n.detail && n.detail.length > 10, n.detail);
 });
 
 test('a refused certificate outranks the connection phase', () => {
@@ -128,11 +137,15 @@ test('the banner names the gateway and offers exactly one way out', () => {
   assert.equal(n.action.command, 'settings');
 });
 
-test('the banner and the gateway row describe one failure the same way', () => {
-  // Two wordings of the same failure would drift the first time either moved.
+test('one failure is described once, by the banner', () => {
+  // The row and the banner both used to print reason(error). Identical wording
+  // was the point then; saying it once is the point now, because two copies of
+  // one sentence read as two problems.
   const error = { code: -102, description: 'ERR_CONNECTION_REFUSED' };
   const row = connection.status({ isActive: true, phase: connection.FAILED, error });
-  assert.equal(connection.failureNotice({ label: 'gw', error }).detail, row.detail);
+  assert.equal(row.detail, null, 'the row carries the state');
+  assert.match(connection.failureNotice({ label: 'gw', error }).detail, /ERR_CONNECTION_REFUSED/,
+    'and the banner carries the reason');
 });
 
 test('a failure with no gateway and no error still reads as a sentence', () => {

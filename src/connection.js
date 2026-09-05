@@ -113,11 +113,12 @@ function status({ isActive, phase = IDLE, error = null, certOffer = null }) {
   if (phase === CONNECTED) return { tone: 'ok', label: 'Connected', detail: null };
   if (phase === CONNECTING) return { tone: 'muted', label: 'Connecting…', detail: null };
   if (phase === FAILED) {
-    return {
-      tone: 'err',
-      label: 'Cannot connect',
-      detail: reason(error),
-    };
+    // The row says the state and nothing else. Why it failed is one sentence,
+    // and it belongs in the banner, which is up whenever this row is red and is
+    // the one place carrying the action that answers it. Printed in both, it
+    // read as two problems, and the copy in the row was the one with no way out
+    // of it: a row cannot be dismissed and cannot offer Open Settings.
+    return { tone: 'err', label: 'Cannot connect', detail: null };
   }
   return { tone: 'muted', label: 'Not connected', detail: null };
 }
