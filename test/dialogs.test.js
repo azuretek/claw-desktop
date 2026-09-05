@@ -21,11 +21,11 @@ const path = require('node:path');
 const SRC = path.join(__dirname, '..', 'src');
 const UI = path.join(SRC, 'ui');
 
-// The one deliberate exception, and the reason it is one: a certificate
-// question has to be answerable before any page has loaded — a failed TLS
-// handshake means the window has no content to lay an overlay over — and it is
-// a security decision rather than a piece of app chrome.
-const NATIVE_DIALOG_ALLOWED = new Set(['certs.js']);
+// There are no exceptions. The last one was the certificate prompt, and it went
+// because the failed handshake means there is often no page to lay a dialog
+// over — and because a yes/no box in front of someone waiting for their app to
+// open is the worst place to put a security decision. It is refused on the spot
+// and settled in Settings instead; see src/certs.js.
 
 const sourceFiles = fs.readdirSync(SRC).filter((f) => f.endsWith('.js'));
 
@@ -50,10 +50,18 @@ test('the app has source files to scan', () => {
   assert.ok(sourceFiles.length >= 10, `only found ${sourceFiles.length} source files`);
 });
 
-test('nothing but certs.js opens a native dialog', () => {
+test('nothing opens a native dialog', () => {
   for (const file of sourceFiles) {
-    if (NATIVE_DIALOG_ALLOWED.has(file)) continue;
     assert.doesNotMatch(code(path.join(SRC, file)), /dialog\.show(MessageBox|ErrorBox)/, `${file} opens a native dialog`);
+  }
+});
+
+test('nothing imports Electron’s dialog module at all', () => {
+  // Stronger than scanning for the call, and the reason it is worth having:
+  // reaching for `dialog` is what someone does when the in-app path looks like
+  // more work, and the import is the moment to notice rather than the call.
+  for (const file of sourceFiles) {
+    assert.doesNotMatch(code(path.join(SRC, file)), /\bdialog\b\s*[,}]/, `${file} imports dialog`);
   }
 });
 

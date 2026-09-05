@@ -228,6 +228,70 @@ function renderGateways() {
 
 /* ------------------------------------------------------------------- other */
 
+/**
+ * Certificates refused this session, waiting for a decision.
+ *
+ * This is the whole reason there is no certificate prompt any more. The
+ * fingerprints are here to be compared rather than dismissed, nothing is
+ * blocked on the answer, and doing nothing leaves the connection refused —
+ * which is the safe outcome, unlike a modal whose easiest button is "yes".
+ */
+function renderCertOffers() {
+  const host = $('cert-offers');
+  host.replaceChildren();
+
+  for (const offer of state.certOffers || []) {
+    const out = el('div', { className: 'result' });
+
+    // A first sighting is routine on a :18789 address. A *changed* fingerprint
+    // on a host that was trusted before is the case worth alarming about, and
+    // the two must not look alike.
+    const heading = offer.changed
+      ? el('div', { className: 'result err', textContent: `The certificate for ${offer.host} has CHANGED since it was trusted.` })
+      : el('div', { className: 'result warn', textContent: `${offer.host} is using a certificate this app cannot verify.` });
+
+    const explain = el('div', {
+      className: 'muted-sm hint',
+      textContent: offer.changed
+        ? 'Expected if the gateway was reinstalled or regenerated its certificate. If nothing like that happened, '
+          + 'something is intercepting the connection — leave it refused.'
+        : 'The OpenClaw gateway generates its own certificate, so this is normal when you connect straight to its '
+          + 'listener (an address ending in :18789) instead of going through the Tailscale Serve address.',
+    });
+
+    const fingerprints = el('div', { className: 'stack' }, [
+      offer.previous ? el('span', { className: 'url', textContent: `previously trusted  ${offer.previous}` }) : null,
+      el('span', { className: 'url', textContent: `${offer.previous ? 'now presenting     ' : 'fingerprint  '}${offer.fingerprint}` }),
+      offer.error ? el('span', { className: 'muted-sm', textContent: `Reason: ${offer.error}` }) : null,
+    ]);
+
+    const trust = el('button', {
+      className: 'primary',
+      textContent: offer.changed ? 'Trust the new certificate' : 'Trust this certificate',
+      onclick: async () => {
+        const res = await api.trustCert(offer.host);
+        state = res;
+        setResult(out, res.trusted ? `Pinned. Reconnecting to ${offer.host}…` : 'That certificate is no longer being offered.', res.trusted ? 'ok' : 'warn');
+        render();
+      },
+    });
+
+    const dismiss = el('button', {
+      className: 'ghost',
+      textContent: 'Not now',
+      onclick: async () => { state = await api.dismissCertOffer(offer.host); render(); },
+    });
+
+    host.append(el('div', { className: 'card' }, [
+      heading,
+      explain,
+      fingerprints,
+      el('div', { className: 'row' }, [el('span', { className: 'grow' }), dismiss, trust]),
+      out,
+    ]));
+  }
+}
+
 function renderCerts() {
   const host = $('certs');
   host.replaceChildren();
@@ -283,7 +347,7 @@ function renderAbout() {
 function render() {
   renderGateways();
   renderAbout();
-  if (!firstRun) { renderCerts(); renderPrefs(); }
+  if (!firstRun) { renderCertOffers(); renderCerts(); renderPrefs(); }
 }
 
 function setResult(node, text, kind) {
@@ -366,6 +430,15 @@ if (!firstRun) {
 }
 
 /* -------------------------------------------------------------------- boot */
+
+// A certificate refused while this page is open — which is exactly what
+// pressing Reconnect from in here does — has to appear without the page being
+// closed and reopened. The snapshot this renders from is otherwise as old as
+// the dialog.
+api.onStateChanged(async () => {
+  state = await api.getState();
+  render();
+});
 
 (async () => {
   state = await api.getState();

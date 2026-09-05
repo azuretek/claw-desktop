@@ -1230,6 +1230,21 @@ function notifyAboutChanged() {
 }
 
 /**
+ * Tell the app's own pages that `currentState()` has moved under them.
+ *
+ * Settings renders from a snapshot it fetched when it opened, so without this a
+ * certificate refused *while it is on screen* — which is exactly what happens
+ * when you press Reconnect from inside it — would not appear until it was
+ * closed and reopened.
+ */
+function notifyStateChanged() {
+  for (const view of overlayViews.values()) {
+    if (!view.webContents.isDestroyed()) view.webContents.send('app:state-changed');
+  }
+  if ((settingsIsPage || showingError) && page()) page().send('app:state-changed');
+}
+
+/**
  * The About box, as one of the app's own overlay pages.
  *
  * Reachable from the menu bar and from the tray. The tray matters more than it
@@ -1449,6 +1464,9 @@ function currentState() {
       return { canInstall: plan.canInstall, reason: plan.capabilityReason };
     })(),
     trustedCerts: cfg.trustedCerts,
+    // Certificates refused this session and waiting for a decision. This is
+    // where the prompt went: Settings shows them, the error page points here.
+    certOffers: certs.pendingOffers(),
     platform: process.platform,
     // Pre-formatted rather than sent as parts: the settings page is sandboxed
     // and cannot require src/build-info.js, so formatting it there would mean a
@@ -1497,6 +1515,22 @@ function registerIpc() {
     const res = secrets.removeHeader(id, name);
     if (res.ok) applyHeaders(session.defaultSession);
     return { ...currentState(), saved: res };
+  });
+  ipcMain.handle('app:trust-cert', (_e, host) => {
+    const offer = certs.trust(String(host));
+    // Reconnecting is the whole point of having trusted it, and the failed load
+    // that produced the offer left the window on the error page — so without
+    // this the reward for making the decision is a page that still says the
+    // connection failed.
+    const gw = config.activeGateway();
+    let activeHost = null;
+    try { activeHost = gw ? new URL(gw.url).host : null; } catch { /* unparseable url, no reconnect */ }
+    if (offer && offer.host === activeHost) loadActiveGateway();
+    return { ...currentState(), trusted: Boolean(offer) };
+  });
+  ipcMain.handle('app:dismiss-cert-offer', (_e, host) => {
+    certs.dismiss(String(host));
+    return currentState();
   });
   ipcMain.handle('app:forget-cert', (_e, host) => {
     const cfg = config.get();
@@ -1573,7 +1607,14 @@ if (!app.requestSingleInstanceLock()) {
     // itself loads in a per-gateway partition configured by createMainWindow.
     chrome.applyTheme(currentTheme);
     configureSession(session.defaultSession, null);
-    certs.install(app, () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null));
+    // No prompt: a refused certificate becomes an offer waiting in Settings,
+    // and the failed load becomes the app's own error page pointing at it.
+    certs.install(app, {
+      onOffer: (offer) => {
+        console.warn(`[claw] refused ${offer.changed ? 'CHANGED' : 'untrusted'} certificate for ${offer.host} (${offer.fingerprint})`);
+        notifyStateChanged();
+      },
+    });
 
     if (!secrets.available()) console.warn(`[claw] ${secrets.unavailableReason()}`);
     registerIpc();

@@ -20,6 +20,10 @@ if (isLocalPage) {
     setCredentials: (id, patch) => ipcRenderer.invoke('app:set-credentials', id, patch),
     addHeader: (id, name, value) => ipcRenderer.invoke('app:add-header', id, name, value),
     removeHeader: (id, name) => ipcRenderer.invoke('app:remove-header', id, name),
+    // A refused certificate is decided here rather than in a prompt. See the
+    // note at the top of src/certs.js for why there is no prompt.
+    trustCert: (host) => ipcRenderer.invoke('app:trust-cert', host),
+    dismissCertOffer: (host) => ipcRenderer.invoke('app:dismiss-cert-offer', host),
     forgetCert: (host) => ipcRenderer.invoke('app:forget-cert', host),
     connect: (id) => ipcRenderer.invoke('app:connect', id),
     saveSettings: (patch) => ipcRenderer.invoke('app:save-settings', patch),
@@ -37,6 +41,7 @@ if (isLocalPage) {
     // given `event` gets `event.sender`, and with it a way back into IPC that
     // the bridge is supposed to be the only door to.
     onAboutChanged: (fn) => ipcRenderer.on('app:about-changed', () => fn()),
+    onStateChanged: (fn) => ipcRenderer.on('app:state-changed', () => fn()),
     message: () => ipcRenderer.invoke('app:message'),
     respondToMessage: (index) => ipcRenderer.invoke('app:message-respond', index),
   });

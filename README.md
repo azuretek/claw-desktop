@@ -92,11 +92,19 @@ The setup window opens on first launch.
 **Which address to use.** Prefer the tailnet name
 (`https://<host>.<tailnet>.ts.net`, no port) — Tailscale Serve terminates a real
 certificate and it simply works. A `:18789` address talks to the gateway's own
-listener, which is self-signed, so the first connection raises a prompt showing
-the certificate fingerprint. Accepting pins **that exact fingerprint for that
-host alone**; a pinned host later presenting a different certificate raises a
-louder warning that defaults to Cancel. Review and revoke under **Settings →
-Trusted certificates**.
+listener, which is self-signed, so the first connection is **refused**, and the
+error page sends you to **Settings → Certificates**, where the fingerprint is
+waiting to be trusted. Trusting pins **that exact fingerprint for that host
+alone** and reconnects.
+
+There is no prompt, deliberately. A yes/no box in front of someone waiting for
+their app to open gets answered by whichever button makes it go away — the same
+button an attacker would want pressed — and it cannot be shown reliably anyway,
+since a failed handshake often means there is no page to put it over. Refusing
+first also makes ignoring it entirely the safe outcome. A pinned host that later
+presents a *different* certificate is called out as changed, with both
+fingerprints shown side by side, and the old pin stays in force until you say
+otherwise.
 
 ## 3. Set your preferences
 
@@ -107,8 +115,14 @@ Trusted certificates**.
   the tray and you quit from there.
 - **Open at login** / **Start hidden in the tray** — together, the app is
   waiting in the tray from boot.
+- **Install updates automatically** — on by default. Off, the app still checks
+  and still tells you a release exists; it just offers to install it rather than
+  downloading it unasked. Disabled, with the reason shown, on a build that could
+  not install one anyway.
 - **Global shortcut** — `CommandOrControl+Shift+O` by default, shows or hides
   the window from anywhere. Clear the field to disable.
+- **Certificates** — pinned fingerprints, and anything refused this session
+  waiting for a decision.
 
 ## 4. Know where your data lives
 
@@ -236,16 +250,13 @@ new version, and when it last looked. Updating is otherwise invisible, which is
 a fair reason to doubt it is happening at all.
 
 Every dialog in the app, About included, is one of its own pages laid over the
-window — never `dialog.showMessageBox`, never Electron's `role: 'about'` panel.
-A native message box is a different dialog on each platform, takes its colours
-from the OS rather than from the Control UI theme the rest of the app tracks,
-and has room for nothing but a line of text and a row of buttons: not the commit
-a build came from, not a word about updating. The one deliberate exception is
-the certificate trust prompt in [src/certs.js](src/certs.js), where a failed TLS
-handshake means the window has no content to lay an overlay over and the
-question is a security decision rather than app chrome.
-[test/dialogs.test.js](test/dialogs.test.js) fails the build if a second one
-appears.
+window — never `dialog.showMessageBox`, never Electron's `role: 'about'` panel,
+no exceptions. A native message box is a different dialog on each platform,
+takes its colours from the OS rather than from the Control UI theme the rest of
+the app tracks, and has room for nothing but a line of text and a row of
+buttons: not the commit a build came from, not a word about updating.
+[test/dialogs.test.js](test/dialogs.test.js) fails the build if one appears —
+it checks for the import, not just the call.
 
 What it does with a release depends on the platform:
 
@@ -393,7 +404,7 @@ src/menus.js         the menu bar, identical on every platform (asserted in test
 src/chrome.js        title strip geometry + theme adopted from the page
 src/autostart.js     launch at login on Linux, which Electron does not implement
 src/cache.js         drops the Control UI's cached copy of itself, never its storage
-src/certs.js         trust-on-first-use certificate pinning
+src/certs.js         certificate pinning; refuses, then offers the choice in Settings
 src/secrets.js       per-gateway token/password/headers, safeStorage-encrypted
 src/config.js        atomic JSON config store (no secrets)
 src/overlay.js       supervises an overlay so a broken one cannot wedge the window
@@ -410,6 +421,7 @@ scripts/build.js         runs a build under the version the tree deserves
 scripts/make-icons.mjs   regenerates the icon PNGs from the SVG artwork
 scripts/dump-menu.js     dumps the resolved menu bar, to diff across platforms
 scripts/dump-overlays.js opens each of the app's own dialogs and checks it rendered
+scripts/test-cert-trust.js runs the refuse -> Settings -> trust -> connected loop for real
 ```
 
 ## Status and licence

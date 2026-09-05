@@ -93,7 +93,11 @@
       </div>
     </div>
 
-    <h2>Trusted certificates</h2>
+    <h2>Certificates</h2>
+    <!-- Anything refused this session lands here, above the ones already
+         trusted. This is where the old native prompt went; see src/certs.js
+         for why the decision is a page and not a dialog. -->
+    <div id="cert-offers"></div>
     <div id="certs"></div>
   </section>
 
