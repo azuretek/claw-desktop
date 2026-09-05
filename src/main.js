@@ -1118,11 +1118,8 @@ function setZoom(delta, absolute) {
 
 /* -------------------------------------------------------------------- updates */
 
-// How often a running app looks for a new release. Long, because the app is
-// meant to sit in the tray for weeks: the cost of noticing an update an hour
-// late is nothing, and the cost of hammering GitHub from every machine is a
-// rate limit on the one call that matters.
-const UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000;
+// How often a running app looks for a new release is read from its own version
+// — six hours on stable, five minutes on dev. See updates.checkIntervalMs().
 // Where a platform that cannot install for itself sends the user. Hard-coded
 // rather than read from electron-builder.yml's `publish` block: that file is not
 // packaged, so the app would be parsing something it does not ship.
@@ -1150,7 +1147,7 @@ function updatePolicy() {
  * Track the automatic-updates preference on an already-running updater.
  *
  * Only `autoDownload` moves. Whether to *check* is deliberately not re-read:
- * turning the preference off leaves the six-hourly check running, which is what
+ * turning the preference off leaves the scheduled check running, which is what
  * lets the app still say a release exists and offer to fetch it on the spot.
  * Restarting the app is not required for the toggle to take effect, and an
  * update already downloaded before it was switched off stays installable —
@@ -1209,8 +1206,10 @@ function initUpdates() {
     void showMessage({ message: 'Claw Desktop is up to date.', detail: `You are on ${app.getVersion()}.`, buttons: ['OK'] });
   });
 
+  const every = updates.checkIntervalMs(app.getVersion());
+  console.log(`[claw] updates: checking every ${Math.round(every / 60000)} min`);
   setTimeout(() => void checkForUpdates('startup'), UPDATE_FIRST_CHECK_MS);
-  updateTimer = setInterval(() => void checkForUpdates('scheduled'), UPDATE_INTERVAL_MS);
+  updateTimer = setInterval(() => void checkForUpdates('scheduled'), every);
 }
 
 let pendingManualCheck = false;

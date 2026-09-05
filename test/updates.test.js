@@ -285,3 +285,27 @@ test('elapsed time reads in the largest unit that still means something', () => 
   // A clock that moved backwards must not produce "-3 minutes ago".
   assert.equal(updates.ago(-1), null);
 });
+
+/* --------------------------------------------------- how often it looks */
+
+test('dev checks every five minutes, stable every six hours', () => {
+  assert.equal(updates.checkIntervalMs('1.0.1-dev.51.e8de8f92c2'), 5 * 60 * 1000);
+  assert.equal(updates.checkIntervalMs('1.0.1'), 6 * 60 * 60 * 1000);
+});
+
+test('the interval follows the same channel rule as allowPrerelease', () => {
+  // One version cannot be on the dev channel for picking releases and on the
+  // stable channel for deciding how often to look. Both read channelOf().
+  for (const v of ['1.0.1', '2.3.4', '1.0.1-dev.51.abc', '1.0.1-beta.2', '9.9.9-rc.1']) {
+    const fast = updates.checkIntervalMs(v) === updates.PRERELEASE_INTERVAL_MS;
+    assert.equal(fast, updates.allowPrerelease(v), `disagreed about ${v}`);
+  }
+});
+
+test('a version that cannot be parsed falls back to the slow interval', () => {
+  // Defensive rather than expected: an unreadable version must not become a
+  // reason to poll GitHub twelve times an hour.
+  for (const v of [undefined, null, '', 'not-a-version']) {
+    assert.equal(updates.checkIntervalMs(v), updates.STABLE_INTERVAL_MS);
+  }
+});

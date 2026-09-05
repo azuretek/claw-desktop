@@ -185,8 +185,9 @@ function availableMessage({ action, version, current, reason = null }) {
 
 /** Whether a check should say anything when there is no update. */
 function shouldReportNoUpdate(trigger) {
-  // A scheduled check that announces "you are up to date" every six hours is
-  // noise. Someone who just clicked "Check for updates" is owed an answer.
+  // A scheduled check that announces "you are up to date" is noise, and more so
+  // on dev, where it would say it every five minutes. Someone who just clicked
+  // "Check for updates" is owed an answer.
   return trigger === 'manual';
 }
 
@@ -225,6 +226,37 @@ function channelOf(version) {
  */
 function allowPrerelease(version) {
   return channelOf(version) !== null;
+}
+
+/** How long a running app waits between scheduled checks. */
+const STABLE_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const PRERELEASE_INTERVAL_MS = 5 * 60 * 1000;
+
+/**
+ * How often this build should look for a new release.
+ *
+ * Stable waits six hours: it is meant to sit in the tray for weeks, and
+ * noticing a release an hour late costs nothing.
+ *
+ * A prerelease channel waits five minutes, because the two channels exist for
+ * opposite reasons. A dev build is installed to watch a change land, so the
+ * interval is the delay between pushing a fix and seeing it — six hours makes
+ * the channel useless for the one job it has.
+ *
+ * Affordable because of where the check goes. On a prerelease channel
+ * GitHubProvider reads `github.com/<owner>/<repo>/releases.atom` and then the
+ * channel's own `.yml` from the release's download path — both plain github.com
+ * URLs, so the 60-per-hour unauthenticated api.github.com rate limit never
+ * applies. Twelve checks an hour is two small conditional GETs each, against a
+ * CDN built for release traffic.
+ *
+ * Derived from the version rather than configured, for the same reason
+ * channelOf() is: the version is stamped at build time and travels with the
+ * installed app, so a build cannot be wrong about which channel it is on. A
+ * setting could disagree with the build it is running in.
+ */
+function checkIntervalMs(version) {
+  return channelOf(version) === null ? STABLE_INTERVAL_MS : PRERELEASE_INTERVAL_MS;
 }
 
 /**
@@ -281,6 +313,6 @@ function statusLine({ action, reason, channel = null, checkedAt = null, result =
 }
 
 module.exports = {
-  capability, policy, availableMessage, shouldReportNoUpdate, channelOf, allowPrerelease, ago, statusLine,
-  INSTALL, MANUAL, NOTIFY, NONE, MAC_SIGNED,
+  capability, policy, availableMessage, shouldReportNoUpdate, channelOf, allowPrerelease, checkIntervalMs, ago, statusLine,
+  INSTALL, MANUAL, NOTIFY, NONE, MAC_SIGNED, STABLE_INTERVAL_MS, PRERELEASE_INTERVAL_MS,
 };
