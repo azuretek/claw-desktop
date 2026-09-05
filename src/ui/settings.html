@@ -70,6 +70,16 @@
           <span>Launch to the tray without showing the window.</span>
         </span>
       </label>
+      <!-- The hint is rewritten by settings.js on a build that cannot install
+           an update at all, where the checkbox is disabled and the reason
+           matters more than the description. -->
+      <label class="check" id="autoUpdate-row">
+        <input type="checkbox" id="autoUpdate">
+        <span class="stack">
+          <span>Install updates automatically</span>
+          <span id="autoUpdate-hint">Download new versions in the background and offer to restart. Off, the app still tells you when one exists and can install it on request.</span>
+        </span>
+      </label>
       <div class="field">
         <span>Global shortcut</span>
         <input type="text" id="globalShortcut" placeholder="CommandOrControl+Shift+O" spellcheck="false">

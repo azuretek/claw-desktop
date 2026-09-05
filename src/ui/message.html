@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:;">
+  <title>Claw Desktop</title>
+  <link rel="stylesheet" href="ui.css">
+</head>
+<body>
+  <!-- Everything this app used to say through dialog.showMessageBox. Same shape
+       in and out — a message, a detail, a row of buttons, a resolved index — so
+       only the pixels changed at the call sites. See the overlay section in
+       main.js for why none of them is a native dialog any more. -->
+  <div class="scrim" id="scrim">
+    <div class="dragbar"></div>
+    <div class="modal modal--narrow" role="alertdialog" aria-modal="true" aria-labelledby="message">
+      <div class="modal__body">
+        <h1 id="message"></h1>
+        <p id="detail"></p>
+        <div class="actions actions--end" id="buttons"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="message.js"></script>
+</body>
+</html>

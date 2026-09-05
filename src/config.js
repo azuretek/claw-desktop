@@ -24,6 +24,13 @@ function blank() {
     closeToTray: true,
     launchAtLogin: false,
     startHidden: false,
+    // Download and offer to install a new version without being asked. True by
+    // default because an out-of-date client against a moving gateway is the
+    // failure this app is most likely to have, and the update is offered rather
+    // than applied — nothing restarts behind anyone's back. Turning it off keeps
+    // the six-hourly check, so the app can still say a release exists and offer
+    // to fetch it on the spot; see updates.policy().
+    autoUpdate: true,
     // "light" | "dark" | null — the Control UI's theme as of the last run, so a
     // cold start opens its windows in the right colours before the gateway has
     // answered. Learned, never configured; see adoptTheme in src/main.js.

@@ -55,20 +55,19 @@ const MAC_SIGNED = true;
 
 /** What to do when a newer version exists. */
 const INSTALL = 'install'; // download it and offer to restart
+const MANUAL = 'manual'; // could install, but only when the user asks for it
 const NOTIFY = 'notify'; // tell the user, link to the release, install by hand
 const NONE = 'none'; // do not even check
 
 /**
- * How this build should behave about updates.
+ * What the *platform* allows, ignoring what the user has asked for.
  *
- * @param {object} opts
- * @param {string} opts.platform   process.platform
- * @param {boolean} opts.packaged  app.isPackaged
- * @param {boolean} [opts.macSigned]
- * @param {boolean} [opts.appImage]  running from an AppImage (Linux only)
- * @returns {{action: string, check: boolean, autoDownload: boolean, reason: string}}
+ * Split from policy() because the two answers are needed separately: Settings
+ * has to say why the automatic-updates toggle is unavailable on a build that
+ * could never install anyway, and that reason is a fact about the build rather
+ * than about the preference.
  */
-function policy({ platform, packaged, macSigned = MAC_SIGNED, appImage = Boolean(process.env.APPIMAGE) }) {
+function capability({ platform, packaged, macSigned = MAC_SIGNED, appImage = Boolean(process.env.APPIMAGE) }) {
   // A source run has no app-update.yml and no version worth comparing.
   // electron-updater guards this itself (`app.isPackaged || forceDevUpdateConfig`)
   // but it does so by logging an error, which reads like a fault every `npm start`.
@@ -114,6 +113,46 @@ function policy({ platform, packaged, macSigned = MAC_SIGNED, appImage = Boolean
 }
 
 /**
+ * How this build should behave about updates, given what the platform allows
+ * and what the user has asked for.
+ *
+ * The preference only ever *narrows* the platform's answer. Turning automatic
+ * updates off cannot make a build that could not install start installing, and
+ * it does not stop the app looking: knowing a release exists is the thing the
+ * user gave up nothing to keep, and it is what makes the manual install offer
+ * possible at all.
+ *
+ * MANUAL rather than NOTIFY when it is off, because the two are different
+ * offers and saying the wrong one is worse than saying nothing. NOTIFY means
+ * "go and replace the app yourself"; MANUAL means "press the button and I will
+ * do it" — which is true here, and which NOTIFY's wording would deny.
+ *
+ * @param {object} opts
+ * @param {string} opts.platform   process.platform
+ * @param {boolean} opts.packaged  app.isPackaged
+ * @param {boolean} [opts.macSigned]
+ * @param {boolean} [opts.appImage]  running from an AppImage (Linux only)
+ * @param {boolean} [opts.autoUpdate]  the user's preference; config.autoUpdate
+ * @returns {{action: string, check: boolean, autoDownload: boolean, reason: string,
+ *           canInstall: boolean, capabilityReason: string}}
+ */
+function policy({ autoUpdate = true, ...opts }) {
+  const base = capability(opts);
+  const canInstall = base.action === INSTALL;
+  const common = { canInstall, capabilityReason: base.reason };
+
+  if (!canInstall || autoUpdate) return { ...base, ...common };
+
+  return {
+    ...common,
+    action: MANUAL,
+    check: true,
+    autoDownload: false,
+    reason: 'automatic updates are turned off in Settings',
+  };
+}
+
+/**
  * Message for the "a new version exists" dialog.
  *
  * Split from the dialog call so the wording is testable and so the two
@@ -128,6 +167,13 @@ function availableMessage({ action, version, current, reason = null }) {
   const headline = `Claw Desktop ${version} is available.`;
   if (action === INSTALL) {
     return { message: headline, detail: `You are on ${current}. It will download in the background, and you can restart to apply it.` };
+  }
+  if (action === MANUAL) {
+    return {
+      message: headline,
+      detail: `You are on ${current}. Automatic updates are off, so nothing has been downloaded yet — `
+        + 'install it now, or turn them back on in Settings.',
+    };
   }
   const because = reason ? `, because ${reason}` : '';
   return {
@@ -225,13 +271,16 @@ function statusLine({ action, reason, channel = null, checkedAt = null, result =
   const follows = `${channel || 'stable'} channel`;
   if (action === NONE) return `Updates: not checked — ${reason}`;
 
-  const behaviour = action === INSTALL ? 'installed automatically' : 'announced, installed by hand';
+  const behaviour = {
+    [INSTALL]: 'installed automatically',
+    [MANUAL]: 'installed when you ask',
+  }[action] || 'announced, installed by hand';
   const when = checkedAt === null ? null : ago(now - checkedAt);
   const last = when ? `last checked ${when}${result ? `, ${result}` : ''}` : 'no check yet this run';
   return `Updates: ${follows}, ${behaviour}; ${last}`;
 }
 
 module.exports = {
-  policy, availableMessage, shouldReportNoUpdate, channelOf, allowPrerelease, ago, statusLine,
-  INSTALL, NOTIFY, NONE, MAC_SIGNED,
+  capability, policy, availableMessage, shouldReportNoUpdate, channelOf, allowPrerelease, ago, statusLine,
+  INSTALL, MANUAL, NOTIFY, NONE, MAC_SIGNED,
 };

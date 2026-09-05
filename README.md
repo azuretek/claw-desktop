@@ -235,6 +235,18 @@ those same places, says which channel this build follows, what it does about a
 new version, and when it last looked. Updating is otherwise invisible, which is
 a fair reason to doubt it is happening at all.
 
+Every dialog in the app, About included, is one of its own pages laid over the
+window — never `dialog.showMessageBox`, never Electron's `role: 'about'` panel.
+A native message box is a different dialog on each platform, takes its colours
+from the OS rather than from the Control UI theme the rest of the app tracks,
+and has room for nothing but a line of text and a row of buttons: not the commit
+a build came from, not a word about updating. The one deliberate exception is
+the certificate trust prompt in [src/certs.js](src/certs.js), where a failed TLS
+handshake means the window has no content to lay an overlay over and the
+question is a security decision rather than app chrome.
+[test/dialogs.test.js](test/dialogs.test.js) fails the build if a second one
+appears.
+
 What it does with a release depends on the platform:
 
 | Platform | Behaviour | Why |
@@ -243,6 +255,13 @@ What it does with a release depends on the platform:
 | **macOS** | Same as Windows | `MacUpdater` hands off to native Squirrel.Mac, which requires a valid signature on the running bundle. Releases are signed with a Developer ID, so it can install |
 | **Linux**, run as an AppImage | Same as Windows | `AppImageUpdater` overwrites the `.AppImage` the process was started from — no signature, no package manager, no root |
 | **Linux**, run any other way | Does not check, and says why | Without `APPIMAGE` in the environment there is no file to replace, and `isUpdaterActive()` returns false: every check would resolve to nothing, silently |
+
+**Install updates automatically** in Settings turns the downloading half off
+without turning the app blind. The check still runs on the same schedule, so a
+new version is still announced — it simply offers **Download and install**
+instead of arriving unasked. Nothing is ever applied without the restart being
+offered either way. On a build that could never install one, the checkbox is
+disabled and says which of the reasons in the table above applies to it.
 
 Automatic checks are silent unless there is something to act on; a manual check
 always answers, including "you are up to date". A failed check — offline, proxy,
@@ -377,18 +396,20 @@ src/cache.js         drops the Control UI's cached copy of itself, never its sto
 src/certs.js         trust-on-first-use certificate pinning
 src/secrets.js       per-gateway token/password/headers, safeStorage-encrypted
 src/config.js        atomic JSON config store (no secrets)
-src/overlay.js       supervises the settings overlay so it cannot wedge the window
-src/updates.js       per-platform update policy (install, notify, or neither)
+src/overlay.js       supervises an overlay so a broken one cannot wedge the window
+src/updates.js       per-platform update policy + the automatic-updates preference
 src/build-info.js    reads the packed-in commit; formats the Settings build line
 src/profile.js       one-time profile move for the OpenClaw -> Claw Desktop rename
 src/defaults.js      suggested gateways and defaults  ← edit for a new machine
 src/preload.js       narrow IPC bridge, exposed to local pages only
-src/ui/              settings and connection-error pages
+src/ui/              the app's own pages: settings, about, message, error
 scripts/build-info.js    stamps the commit in at pack time (beforePack hook)
 scripts/version.js       CI build versioning + tag/package.json agreement
 scripts/build-version.js decides the version a CI build carries
 scripts/build.js         runs a build under the version the tree deserves
 scripts/make-icons.mjs   regenerates the icon PNGs from the SVG artwork
+scripts/dump-menu.js     dumps the resolved menu bar, to diff across platforms
+scripts/dump-overlays.js opens each of the app's own dialogs and checks it rendered
 ```
 
 ## Status and licence

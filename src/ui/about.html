@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: file:;">
+  <title>About Claw Desktop</title>
+  <link rel="stylesheet" href="ui.css">
+</head>
+<body>
+  <!-- Ours rather than Electron's `role: 'about'` panel. That panel shows a
+       fixed name/version/copyright card: it cannot show the commit a build came
+       from, cannot say anything about updating, and cannot carry a button — so
+       the two things people open About to do are the two things it cannot do.
+       It is also a different dialog on each platform, and on Windows it only
+       exists at all from Electron 15. See the overlay section in main.js. -->
+  <div class="scrim" id="scrim">
+    <div class="dragbar"></div>
+    <div class="modal modal--narrow" role="dialog" aria-modal="true" aria-labelledby="title">
+      <header class="modal__header">
+        <img class="modal__icon" src="../assets/claw.svg" alt="">
+        <div class="stack">
+          <h1 id="title">Claw Desktop</h1>
+          <p class="sub" id="build">Loading…</p>
+        </div>
+        <button class="modal__close" id="close" type="button" aria-label="Close" title="Close (Esc)">&#10005;</button>
+      </header>
+      <div class="modal__body">
+
+        <div class="card">
+          <div class="stack">
+            <span class="name">Updates</span>
+            <span class="muted-sm" id="update-status">Loading…</span>
+            <span class="muted-sm" id="update-hint" hidden></span>
+          </div>
+          <div class="actions">
+            <button id="check" class="primary">Check for updates</button>
+            <button id="releases" class="ghost">Release notes</button>
+          </div>
+          <div class="result" id="check-result"></div>
+        </div>
+
+        <!-- Filled in by about.js: one row per thing a bug report asks for. -->
+        <div id="facts"></div>
+
+      </div>
+    </div>
+  </div>
+
+  <script src="about.js"></script>
+</body>
+</html>

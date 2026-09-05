@@ -1,9 +1,14 @@
 'use strict';
 
 const {
-  app, BrowserWindow, WebContentsView, Tray, Menu, MenuItem, shell, dialog,
+  app, BrowserWindow, WebContentsView, Tray, Menu, MenuItem, shell,
   globalShortcut, nativeImage, ipcMain, screen, session,
 } = require('electron');
+// No `dialog` here on purpose. Everything this app says to the user is one of
+// its own overlay pages -- see the overlay section below. The one exception in
+// the project is src/certs.js, which has to be able to ask about a certificate
+// before any page has loaded, and where the question is a security decision
+// rather than a piece of app chrome.
 const path = require('node:path');
 const fs = require('node:fs');
 const https = require('node:https');
@@ -52,13 +57,10 @@ let mainWindow = null;
 let pageView = null;
 // The strip above it, on macOS and Windows. See ui/titlebar.html.
 let stripView = null;
-// Settings is a view layered over the main window's contents, not a window of
-// its own. It stays a separate WebContents on purpose: the page holds the
-// privileged IPC bridge, and the preload grants that bridge only to `file://`
-// pages, so hosting it inside the gateway's document would mean handing remote
-// content the ability to rewrite gateway settings and read pinned fingerprints.
-// A child view keeps the modal *look* without giving up that boundary.
-let settingsView = null;
+// Settings, About and message dialogs are views layered over the main window's
+// contents rather than windows or native dialogs of their own. See the overlay
+// section below for why, and for the map that holds them.
+//
 // True while the main window is showing the settings page directly, which is
 // the first run: there is no gateway to lay a modal over yet.
 let settingsIsPage = false;
@@ -114,9 +116,9 @@ function layoutViews() {
   const top = chrome.contentInset().top;
   if (stripView) stripView.setBounds({ x: 0, y: 0, width, height: top });
   if (pageView) pageView.setBounds({ x: 0, y: top, width, height: Math.max(0, height - top) });
-  // The modal covers everything including the strip: the scrim is meant to dim
-  // the whole window, and the settings page carries its own drag band.
-  if (settingsView) settingsView.setBounds({ x: 0, y: 0, width, height });
+  // A modal covers everything including the strip: the scrim is meant to dim
+  // the whole window, and each overlay page carries its own drag band.
+  for (const view of overlayViews.values()) view.setBounds({ x: 0, y: 0, width, height });
 }
 
 function trayImage() {
@@ -283,7 +285,7 @@ function loadActiveGateway() {
     showingError = false;
     settingsIsPage = true;
     closeSettings();
-    page()?.loadFile(path.join(UI_DIR, 'settings.html'), { search: settingsSearch({ firstRun: true }) });
+    page()?.loadFile(path.join(UI_DIR, 'settings.html'), { search: overlaySearch({ firstRun: true }) });
     return null;
   }
   showingError = false;
@@ -690,7 +692,9 @@ function createMainWindow() {
   mainWindow.on('closed', () => {
     pageView = null;
     stripView = null;
-    settingsView = null;
+    overlayViews.clear();
+    // Nothing left to answer with, so an in-flight message dialog cancels.
+    settleMessage(null);
   });
 
   // `ready-to-show` is the window's own signal and it never fires now: the
@@ -721,7 +725,7 @@ function showMainWindow() {
   // window has stopped responding, so this is the right place to sweep up a dead
   // overlay: it makes the instinctive gesture the recovery gesture. Supervision
   // should have caught it already — this is the net under that.
-  if (settingsView && !settingsAlive()) closeSettings();
+  for (const name of [...overlayViews.keys()]) if (!overlayAlive(name)) closeOverlay(name);
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
@@ -763,14 +767,40 @@ function adoptTheme(theme) {
   if (modeChanged) config.update({ themeMode: theme.mode });
 }
 
-/* ---------------------------------------------------------- settings window */
+/* ----------------------------------------------------------------- overlays */
 
+/**
+ * Every dialog this app shows is one of these: a local page in a transparent
+ * WebContentsView layered over the window's contents.
+ *
+ * None of them is a native dialog, and that is a deliberate rule for the whole
+ * project rather than a preference about looks. A native message box is a
+ * different dialog on each of the three platforms, takes its colours from the
+ * OS rather than from the Control UI theme the rest of the app is tracking,
+ * and — the reason the About box came here first — cannot carry anything but a
+ * fixed line of text and a row of buttons. Electron's `role: 'about'` panel
+ * cannot show which commit a build came from, and it does not exist at all on
+ * Windows before Electron 15.
+ *
+ * They stay separate WebContents rather than being drawn into the gateway's own
+ * document, because these pages hold the privileged IPC bridge: the preload
+ * grants it only to `file://` pages, so hosting them inside remote content
+ * would hand a gateway the ability to rewrite settings and read pinned
+ * fingerprints. A child view keeps the modal *look* without giving that up.
+ *
+ * Views stack in the order they are added, so a message opened while Settings
+ * is up lands on top of it and Settings is still there underneath when it goes.
+ */
+const OVERLAY_PAGES = { settings: 'settings.html', about: 'about.html', message: 'message.html' };
+
+/** name -> WebContentsView, in the order they were opened, which is z-order. */
+const overlayViews = new Map();
 
 // `frameless` rides in the URL rather than being fetched over IPC because the
 // page uses it for layout — how far down the card starts, to clear the drag
 // band. Asked for asynchronously it arrives after first paint, and the card
 // visibly jumps on every open.
-function settingsSearch(opts = {}) {
+function overlaySearch(opts = {}) {
   const params = new URLSearchParams();
   if (opts.firstRun) params.set('firstRun', '1');
   if (chrome.enabled()) params.set('frameless', '1');
@@ -778,62 +808,58 @@ function settingsSearch(opts = {}) {
 }
 
 /** True if this overlay is still a live thing that can be focused and closed. */
-function settingsAlive() {
-  return Boolean(settingsView) && !settingsView.webContents.isDestroyed();
+function overlayAlive(name) {
+  const view = overlayViews.get(name);
+  return Boolean(view) && !view.webContents.isDestroyed();
 }
 
-function openSettings(opts = {}) {
+function openOverlay(name, opts = {}) {
   if (!mainWindow || mainWindow.isDestroyed()) return null;
-  // On first run the main window is already showing this page full-size; a
-  // modal of the same thing over the top of itself is not an improvement.
-  if (settingsIsPage) {
-    showMainWindow();
-    return null;
-  }
   // A destroyed view still covers the window and still eats clicks, so focusing
   // it does nothing and reopening has to mean *replace*. Otherwise the one
-  // action a wedged user would try — click Settings again — is the one action
-  // guaranteed not to help.
-  if (settingsView && !settingsAlive()) closeSettings();
-  if (settingsView) {
-    settingsView.webContents.focus();
-    return settingsView;
+  // action a wedged user would try — click the menu item again — is the one
+  // action guaranteed not to help.
+  if (overlayViews.has(name) && !overlayAlive(name)) closeOverlay(name);
+  if (overlayViews.has(name)) {
+    const existing = overlayViews.get(name);
+    existing.webContents.focus();
+    return existing;
   }
 
-  settingsView = new WebContentsView({
+  const view = new WebContentsView({
     webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   // Transparent, so the translucent scrim the page paints actually reveals the
   // Control UI underneath instead of a black rectangle. A view added to a
   // window is opaque until told otherwise.
-  settingsView.setBackgroundColor('#00000000');
+  view.setBackgroundColor('#00000000');
+  overlayViews.set(name, view);
 
-  const wc = settingsView.webContents;
+  const wc = view.webContents;
   attachContextMenu(wc);
   // Armed before the view is attached, so a load that fails immediately is
-  // already covered. `isCurrent` is a closure over the module-level handle
-  // rather than a captured boolean: it has to answer for the overlay that is
-  // live *now*, or a dying one closes its own replacement.
-  const view = settingsView;
+  // already covered. `isCurrent` is a closure over the live handle rather than
+  // a captured boolean: it has to answer for the overlay that is open *now*, or
+  // a dying one closes its own replacement.
   overlay.supervise(wc, {
-    isCurrent: () => settingsView === view,
-    close: () => closeSettings(),
-    log: (msg) => console.error(`[claw] ${msg}`),
+    isCurrent: () => overlayViews.get(name) === view,
+    close: () => closeOverlay(name),
+    log: (msg) => console.error(`[claw] ${name} overlay: ${msg}`),
   });
-  mainWindow.contentView.addChildView(settingsView);
+  mainWindow.contentView.addChildView(view);
   layoutViews();
-  wc.loadFile(path.join(UI_DIR, 'settings.html'), { search: settingsSearch() });
+  wc.loadFile(path.join(UI_DIR, OVERLAY_PAGES[name]), { search: opts.search || overlaySearch() });
   wc.once('did-finish-load', () => {
     applyThemeCss(wc);
     wc.focus();
   });
-  return settingsView;
+  return view;
 }
 
-function closeSettings() {
-  if (!settingsView) return;
-  const view = settingsView;
-  settingsView = null;
+function closeOverlay(name) {
+  const view = overlayViews.get(name);
+  if (!view) return;
+  overlayViews.delete(name);
   themeCssKeys.delete(view.webContents.id);
   try {
     mainWindow?.contentView.removeChildView(view);
@@ -843,7 +869,83 @@ function closeSettings() {
   try {
     if (!view.webContents.isDestroyed()) view.webContents.close();
   } catch { /* already torn down */ }
-  page()?.focus();
+  // A message shown over Settings must hand focus back to Settings, not to the
+  // gateway page buried under both of them.
+  const remaining = [...overlayViews.values()].filter((v) => !v.webContents.isDestroyed());
+  if (remaining.length) remaining[remaining.length - 1].webContents.focus();
+  else page()?.focus();
+  // The renderer is the only thing that can answer a message dialog, so losing
+  // it has to count as the cancel button. Otherwise a crashed overlay leaves
+  // whoever awaited showMessage() waiting for a click that can never happen.
+  if (name === 'message') settleMessage(null);
+}
+
+function openSettings() {
+  // On first run the main window is already showing this page full-size; a
+  // modal of the same thing over the top of itself is not an improvement.
+  if (settingsIsPage) {
+    showMainWindow();
+    return null;
+  }
+  return openOverlay('settings');
+}
+
+function closeSettings() {
+  closeOverlay('settings');
+}
+
+/* ------------------------------------------------------------ message modal */
+
+// Anything that used to be dialog.showMessageBox(). Same shape in and out — a
+// message, a detail, a list of buttons, a resolved `{ response }` index — so
+// the call sites read the same and only the pixels changed.
+let currentMessage = null;
+const messageQueue = [];
+
+/**
+ * Show one of the app's own message dialogs and resolve with the button index.
+ *
+ * Queued rather than concurrent: two of these on screen at once would be two
+ * scrims dimming each other, and the native dialogs this replaces serialised
+ * too. The window is brought forward first, because an overlay inside a hidden
+ * window is a dialog nobody can answer — and this app spends most of its life
+ * closed to the tray.
+ *
+ * @param {{message: string, detail?: string, kind?: string, buttons?: string[],
+ *          defaultId?: number, cancelId?: number}} spec
+ * @returns {Promise<{response: number}>}
+ */
+function showMessage(spec) {
+  return new Promise((resolve) => {
+    messageQueue.push({ spec, resolve });
+    pumpMessages();
+  });
+}
+
+/** Resolve the open message. `null` means it was dismissed rather than answered. */
+function settleMessage(response) {
+  const pending = currentMessage;
+  if (!pending) return;
+  currentMessage = null;
+  const cancel = Number.isInteger(pending.spec.cancelId) ? pending.spec.cancelId : 0;
+  pending.resolve({ response: response === null ? cancel : response });
+}
+
+function pumpMessages() {
+  if (currentMessage) return;
+  // Settled already, so this closes an empty shell rather than cancelling
+  // anything — and it guarantees the next message gets a page that reads its
+  // own state fresh on load, with no need to push an update into a live one.
+  closeOverlay('message');
+  const next = messageQueue.shift();
+  if (!next) return;
+  currentMessage = next;
+  showMainWindow();
+  if (!openOverlay('message')) {
+    // No window to lay it over, so there is nothing to answer with.
+    settleMessage(null);
+    pumpMessages();
+  }
 }
 
 /**
@@ -870,7 +972,9 @@ async function applyThemeCss(wc) {
 
 /** Re-theme every page of ours that is currently on screen. */
 function refreshThemedPages() {
-  if (settingsView && !settingsView.webContents.isDestroyed()) applyThemeCss(settingsView.webContents);
+  for (const view of overlayViews.values()) {
+    if (!view.webContents.isDestroyed()) applyThemeCss(view.webContents);
+  }
   // The strip is one of the app's own pages, and the one most visibly wrong if
   // it lags: it sits directly against the UI, so a stale surface colour reads as
   // a mismatched band across the top rather than as a slow repaint somewhere.
@@ -917,7 +1021,29 @@ let updateTimer = null;
 let lastCheck = { at: null, result: null };
 
 function updatePolicy() {
-  return updates.policy({ platform: process.platform, packaged: app.isPackaged });
+  return updates.policy({
+    platform: process.platform,
+    packaged: app.isPackaged,
+    autoUpdate: config.get().autoUpdate !== false,
+  });
+}
+
+/**
+ * Track the automatic-updates preference on an already-running updater.
+ *
+ * Only `autoDownload` moves. Whether to *check* is deliberately not re-read:
+ * turning the preference off leaves the six-hourly check running, which is what
+ * lets the app still say a release exists and offer to fetch it on the spot.
+ * Restarting the app is not required for the toggle to take effect, and an
+ * update already downloaded before it was switched off stays installable —
+ * throwing away 130MB somebody already waited for would be a strange reading of
+ * "stop downloading updates".
+ */
+function applyUpdatePreference() {
+  if (!updater) return;
+  const plan = updatePolicy();
+  updater.autoDownload = plan.autoDownload;
+  notifyAboutChanged();
 }
 
 /**
@@ -943,23 +1069,26 @@ function initUpdates() {
   updater.autoInstallOnAppQuit = false;
   updater.logger = { info: () => {}, warn: () => {}, error: (m) => console.error(`[claw] updater: ${m}`), debug: () => {} };
 
-  updater.on('update-available', (info) => onUpdateAvailable(info, plan));
+  // The plan is re-read on every event rather than captured here: the
+  // automatic-updates preference can change while the app runs, and a handler
+  // holding the plan from startup would keep acting on the old answer.
+  updater.on('update-available', (info) => onUpdateAvailable(info));
   updater.on('update-downloaded', (info) => onUpdateDownloaded(info));
   updater.on('error', (err) => {
-    // Never a dialog. A machine that is offline, or behind a proxy, or hitting a
-    // rate limit must not interrupt whatever the user was doing to say so.
+    // Never unprompted. A machine that is offline, or behind a proxy, or hitting
+    // a rate limit must not interrupt whatever the user was doing to say so.
     console.error(`[claw] update check failed: ${err && err.message}`);
-    lastCheck = { at: Date.now(), result: 'check failed' };
+    setLastCheck('check failed');
     if (pendingManualCheck) {
       pendingManualCheck = false;
-      dialog.showMessageBox({ type: 'warning', message: 'Could not check for updates.', detail: String((err && err.message) || err), buttons: ['OK'] });
+      void showMessage({ kind: 'warning', message: 'Could not check for updates.', detail: String((err && err.message) || err), buttons: ['OK'] });
     }
   });
   updater.on('update-not-available', () => {
-    lastCheck = { at: Date.now(), result: 'up to date' };
+    setLastCheck('up to date');
     if (!pendingManualCheck) return;
     pendingManualCheck = false;
-    dialog.showMessageBox({ type: 'info', message: 'Claw Desktop is up to date.', detail: `You are on ${app.getVersion()}.`, buttons: ['OK'] });
+    void showMessage({ message: 'Claw Desktop is up to date.', detail: `You are on ${app.getVersion()}.`, buttons: ['OK'] });
   });
 
   setTimeout(() => void checkForUpdates('startup'), UPDATE_FIRST_CHECK_MS);
@@ -968,11 +1097,17 @@ function initUpdates() {
 
 let pendingManualCheck = false;
 
+/** Record how a check ended, and push it to an About box that is on screen. */
+function setLastCheck(result) {
+  lastCheck = { at: Date.now(), result };
+  notifyAboutChanged();
+}
+
 async function checkForUpdates(trigger = 'manual') {
   if (!updater) {
     if (updates.shouldReportNoUpdate(trigger)) {
       const plan = updatePolicy();
-      dialog.showMessageBox({ type: 'info', message: 'Updates are not available in this build.', detail: plan.reason, buttons: ['OK'] });
+      void showMessage({ message: 'Updates are not available in this build.', detail: plan.reason, buttons: ['OK'] });
     }
     return;
   }
@@ -987,9 +1122,10 @@ async function checkForUpdates(trigger = 'manual') {
   }
 }
 
-async function onUpdateAvailable(info, plan) {
+async function onUpdateAvailable(info) {
+  const plan = updatePolicy();
   pendingManualCheck = false;
-  lastCheck = { at: Date.now(), result: `${info.version} available` };
+  setLastCheck(`${info.version} available`);
   // Windows downloads in the background and speaks once it can actually offer
   // the restart, so there is nothing useful to say yet.
   if (plan.action === updates.INSTALL) return;
@@ -997,18 +1133,39 @@ async function onUpdateAvailable(info, plan) {
   const { message, detail } = updates.availableMessage({
     action: plan.action, version: info.version, current: app.getVersion(), reason: plan.reason,
   });
-  const { response } = await dialog.showMessageBox({
-    type: 'info', message, detail, buttons: ['Open release page', 'Later'], defaultId: 0, cancelId: 1,
+
+  // Two different offers, and saying the wrong one is worse than saying
+  // nothing: MANUAL means this build can install it and is waiting to be told,
+  // NOTIFY means it genuinely cannot and the release page is the only way on.
+  const canInstallNow = plan.action === updates.MANUAL;
+  const { response } = await showMessage({
+    message,
+    detail,
+    buttons: [canInstallNow ? 'Download and install' : 'Open release page', 'Later'],
+    defaultId: 0,
+    cancelId: 1,
   });
-  if (response === 0) await shell.openExternal(`${RELEASES_URL}/tag/v${info.version}`);
+  if (response !== 0) return;
+  if (!canInstallNow) {
+    await shell.openExternal(`${RELEASES_URL}/tag/v${info.version}`);
+    return;
+  }
+  // Straight to downloadUpdate rather than flipping autoDownload: this is a
+  // one-off yes to this version, not a change to the preference.
+  setLastCheck(`downloading ${info.version}`);
+  try {
+    await updater.downloadUpdate();
+  } catch (err) {
+    setLastCheck('download failed');
+    void showMessage({ kind: 'warning', message: 'Could not download the update.', detail: String((err && err.message) || err), buttons: ['OK'] });
+  }
 }
 
 async function onUpdateDownloaded(info) {
   updateReady = info.version;
-  lastCheck = { at: Date.now(), result: `${info.version} downloaded, restart to apply` };
+  setLastCheck(`${info.version} downloaded, restart to apply`);
   buildTray(); // so "Restart to update" appears without waiting for the dialog
-  const { response } = await dialog.showMessageBox({
-    type: 'info',
+  const { response } = await showMessage({
     message: `Claw Desktop ${info.version} is ready.`,
     detail: 'Restart to finish updating. You can also keep working and restart later.',
     buttons: ['Restart now', 'Later'],
@@ -1024,27 +1181,20 @@ async function onUpdateDownloaded(info) {
 }
 
 /**
- * The About box.
+ * What the About box shows, gathered in one place so the page and any future
+ * caller cannot disagree about it.
  *
- * Ours rather than Electron's `role: 'about'` panel, for two reasons that both
- * come down to the panel being a fixed name/version/copyright card: it cannot
- * show the commit this build came from or say anything about updating, and it
- * cannot carry a button. The two things people open About to do — find out what
- * they are running, and make it check for a newer one — are the two things the
- * native panel cannot do. This is also identical on all three platforms, where
- * the native panel is a different dialog on each and, on Windows, one that only
- * appeared in Electron 15.
- *
- * Reachable from the menu bar and from the tray. The tray matters more than it
- * looks: Windows runs with `autoHideMenuBar`, so the menu bar is behind an Alt
- * press that nobody discovers, which is exactly how a build with a working
- * "Check for updates…" can still read as having none.
+ * Every line is something someone gets asked for when reporting a problem and
+ * cannot look up for themselves: which build this is, what it does about new
+ * versions and when it last looked, and the runtime a rendering bug would be
+ * blamed on.
  */
-async function showAbout() {
+function aboutState() {
   const plan = updatePolicy();
-  const { message, detail } = buildInfo.about({
+  return {
     version: app.getVersion(),
-    info: buildStamp,
+    build: buildInfo.describe(app.getVersion(), buildStamp),
+    channel: updates.channelOf(app.getVersion()) || 'stable',
     updateStatus: updates.statusLine({
       action: plan.action,
       reason: plan.reason,
@@ -1052,24 +1202,44 @@ async function showAbout() {
       checkedAt: lastCheck.at,
       result: lastCheck.result,
     }),
-    electron: process.versions.electron,
-    chrome: process.versions.chrome,
+    // The About box is where someone goes to ask "is it even updating?", so it
+    // has to be able to answer "no, and here is the switch" as well as "yes".
+    autoUpdate: config.get().autoUpdate !== false,
+    canInstall: plan.canInstall,
+    capabilityReason: plan.capabilityReason,
+    checking: pendingManualCheck,
+    updateReady,
+    versions: { electron: process.versions.electron, chrome: process.versions.chrome },
     platform: process.platform,
     arch: process.arch,
-  });
+    releasesUrl: RELEASES_URL,
+  };
+}
 
-  const { response } = await dialog.showMessageBox({
-    type: 'info',
-    icon: nativeImage.createFromPath(path.join(ASSETS, 'icon.png')),
-    message,
-    detail,
-    buttons: ['OK', 'Check for updates…', 'Releases'],
-    defaultId: 0,
-    cancelId: 0,
-    noLink: true,
-  });
-  if (response === 1) void checkForUpdates('manual');
-  if (response === 2) void shell.openExternal(RELEASES_URL);
+/**
+ * Push a fresh About state into the box if it happens to be open.
+ *
+ * Without this, clicking "Check for updates" from inside About would leave the
+ * status line it is sitting under saying "no check yet this run" — the one
+ * question the box exists to answer, answered wrongly, immediately after the
+ * user did the thing that changed it.
+ */
+function notifyAboutChanged() {
+  const view = overlayViews.get('about');
+  if (view && !view.webContents.isDestroyed()) view.webContents.send('app:about-changed');
+}
+
+/**
+ * The About box, as one of the app's own overlay pages.
+ *
+ * Reachable from the menu bar and from the tray. The tray matters more than it
+ * looks: Windows runs with `autoHideMenuBar`, so the menu bar is behind an Alt
+ * press that nobody discovers, which is exactly how a build with a working
+ * "Check for updates…" can still read as having none.
+ */
+function showAbout() {
+  showMainWindow();
+  openOverlay('about');
 }
 
 /**
@@ -1083,7 +1253,7 @@ async function showAbout() {
  */
 function menuCommands() {
   return {
-    about: { label: 'About Claw Desktop', click: () => { void showAbout(); } },
+    about: { label: 'About Claw Desktop', click: () => showAbout() },
     checkUpdates: { label: 'Check for updates…', click: () => { void checkForUpdates('manual'); } },
     releaseNotes: { label: 'Release notes', click: () => { void shell.openExternal(RELEASES_URL); } },
     settings: { label: 'Settings…', click: () => openSettings() },
@@ -1269,7 +1439,15 @@ function currentState() {
       closeToTray: cfg.closeToTray,
       launchAtLogin: cfg.launchAtLogin,
       startHidden: cfg.startHidden,
+      autoUpdate: cfg.autoUpdate !== false,
     },
+    // Why the automatic-updates toggle is unavailable, where it is. A build
+    // that could never install one has nothing to switch on, and saying so
+    // beats a checkbox that silently does nothing.
+    updates: (() => {
+      const plan = updatePolicy();
+      return { canInstall: plan.canInstall, reason: plan.capabilityReason };
+    })(),
     trustedCerts: cfg.trustedCerts,
     platform: process.platform,
     // Pre-formatted rather than sent as parts: the settings page is sandboxed
@@ -1336,12 +1514,29 @@ function registerIpc() {
     config.update(patch);
     const shortcut = registerShortcut();
     const login = applyLaunchAtLogin();
+    // Takes effect now rather than on the next launch: a preference that needs
+    // a restart to mean anything is one the user cannot tell they have set.
+    applyUpdatePreference();
     buildTray();
     return { ...currentState(), shortcut, login };
   });
   ipcMain.handle('app:retry', () => { loadActiveGateway(); });
   ipcMain.handle('app:open-settings', () => { openSettings(); });
   ipcMain.handle('app:close-settings', () => { closeSettings(); });
+
+  // The app's own dialogs. `app:message` is what a freshly loaded message page
+  // asks for; there is no push, so a page that reloads for any reason comes
+  // back showing the same thing rather than an empty card.
+  ipcMain.handle('app:close-overlay', (_e, name) => { closeOverlay(String(name)); });
+  ipcMain.handle('app:about', () => aboutState());
+  ipcMain.handle('app:check-updates', () => { void checkForUpdates('manual'); });
+  ipcMain.handle('app:open-releases', () => shell.openExternal(RELEASES_URL));
+  ipcMain.handle('app:message', () => (currentMessage ? currentMessage.spec : null));
+  ipcMain.handle('app:message-respond', (_e, index) => {
+    settleMessage(Number.isInteger(index) ? index : null);
+    closeOverlay('message');
+    pumpMessages();
+  });
 
   // Synchronous, and only because the caller is a sandboxed preload that cannot
   // require src/chrome.js. Serving the list from its one owner beats keeping a

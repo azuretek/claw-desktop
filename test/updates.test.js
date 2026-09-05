@@ -151,6 +151,79 @@ test('the notify message takes its reason from the policy, not from a hardcoded 
   assert.doesNotMatch(m.detail, /code signed/);
 });
 
+/* ------------------------------------------- the automatic-updates preference */
+
+// The preference may only ever *narrow* what the platform allows. The failure
+// worth guarding against is the other direction: a toggle that appears to
+// enable something the build could never do, or one that quietly stops the app
+// noticing releases at all.
+
+const withPref = (platform, autoUpdate) => updates.policy({
+  platform, packaged: true, macSigned: true, appImage: true, autoUpdate,
+});
+
+test('turning automatic updates off stops the download, not the check', () => {
+  const p = withPref('win32', false);
+  assert.equal(p.autoDownload, false, 'nothing arrives unasked');
+  assert.equal(p.check, true, 'but the app still notices a release exists');
+  assert.equal(p.action, updates.MANUAL);
+});
+
+test('off is MANUAL rather than NOTIFY, because this build really can install it', () => {
+  // NOTIFY's wording sends people to the release page to replace the app by
+  // hand. Saying that to someone whose app is one button away from doing it
+  // itself is worse than saying nothing.
+  const m = updates.availableMessage({
+    action: withPref('win32', false).action, version: '1.2.0', current: '1.1.0',
+  });
+  assert.match(m.detail, /install it now/i);
+  assert.doesNotMatch(m.detail, /replace the app/);
+});
+
+test('the preference cannot switch on a platform that could never install', () => {
+  for (const p of [
+    updates.policy({ platform: 'darwin', packaged: true, macSigned: false, autoUpdate: true }),
+    updates.policy({ platform: 'linux', packaged: true, appImage: false, autoUpdate: true }),
+    updates.policy({ platform: 'win32', packaged: false, autoUpdate: true }),
+  ]) {
+    assert.equal(p.canInstall, false);
+    assert.equal(p.autoDownload, false);
+    assert.notEqual(p.action, updates.INSTALL);
+  }
+});
+
+test('canInstall reports the platform, not the preference', () => {
+  // Settings disables the checkbox on canInstall and explains itself with
+  // capabilityReason, so both have to keep describing the build even once the
+  // preference has changed the action out from under them.
+  const off = withPref('win32', false);
+  assert.equal(off.canInstall, true, 'the build can install; the user asked it not to');
+  assert.match(off.capabilityReason, /NSIS/);
+  assert.match(off.reason, /turned off/, 'reason describes the current action');
+});
+
+test('leaving the preference unset behaves exactly as before', () => {
+  // Every other caller and test omits it, so the default is load-bearing.
+  const implicit = updates.policy({ platform: 'win32', packaged: true });
+  assert.equal(implicit.action, updates.INSTALL);
+  assert.equal(implicit.autoDownload, true);
+  assert.equal(withPref('win32', true).action, updates.INSTALL);
+});
+
+test('capability() answers about the platform alone', () => {
+  const cap = updates.capability({ platform: 'win32', packaged: true });
+  assert.equal(cap.action, updates.INSTALL);
+  assert.equal(cap.autoDownload, true);
+  assert.equal(cap.canInstall, undefined, 'that field is policy()’s answer, not this one’s');
+});
+
+test('About says updates wait for you when the preference is off', () => {
+  const p = withPref('win32', false);
+  const line = updates.statusLine({ action: p.action, reason: p.reason, channel: 'dev' });
+  assert.match(line, /installed when you ask/);
+  assert.doesNotMatch(line, /automatically/);
+});
+
 /* ------------------------------------------------------------------ quietness */
 
 test('only a manual check reports that there is nothing to do', () => {

@@ -26,6 +26,19 @@ if (isLocalPage) {
     retry: () => ipcRenderer.invoke('app:retry'),
     openSettings: () => ipcRenderer.invoke('app:open-settings'),
     closeSettings: () => ipcRenderer.invoke('app:close-settings'),
+
+    /* The app's own dialogs, in place of native ones. See the overlay section
+       in src/main.js for why none of these is a dialog.showMessageBox. */
+    closeOverlay: (name) => ipcRenderer.invoke('app:close-overlay', name),
+    about: () => ipcRenderer.invoke('app:about'),
+    checkUpdates: () => ipcRenderer.invoke('app:check-updates'),
+    openReleases: () => ipcRenderer.invoke('app:open-releases'),
+    // The listener is wrapped rather than handed the raw event: a renderer
+    // given `event` gets `event.sender`, and with it a way back into IPC that
+    // the bridge is supposed to be the only door to.
+    onAboutChanged: (fn) => ipcRenderer.on('app:about-changed', () => fn()),
+    message: () => ipcRenderer.invoke('app:message'),
+    respondToMessage: (index) => ipcRenderer.invoke('app:message-respond', index),
   });
 }
 

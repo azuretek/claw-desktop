@@ -259,6 +259,17 @@ function renderPrefs() {
   $('launchAtLogin').checked = s.launchAtLogin;
   $('startHidden').checked = s.startHidden;
   $('globalShortcut').value = s.globalShortcut || '';
+
+  // A build that could never install an update has nothing to switch on, so the
+  // checkbox says why instead of sitting there doing nothing when clicked —
+  // which is what an unsigned macOS build or a non-AppImage Linux run gets.
+  const canInstall = !state.updates || state.updates.canInstall;
+  $('autoUpdate').checked = s.autoUpdate && canInstall;
+  $('autoUpdate').disabled = !canInstall;
+  if (!canInstall) {
+    $('autoUpdate-hint').textContent =
+      `This build cannot install its own updates — ${state.updates.reason}. It will still tell you when a new version exists.`;
+  }
 }
 
 // `state.build` already reads as "1.0.0 (a1b2c3d4e5, built …)" — the main
@@ -311,6 +322,10 @@ $('save').addEventListener('click', async () => {
     closeToTray: $('closeToTray').checked,
     launchAtLogin: $('launchAtLogin').checked,
     startHidden: $('startHidden').checked,
+    // Never write false just because the checkbox is disabled: a Linux user who
+    // once ran the unpacked binary would come back to their AppImage with the
+    // preference silently turned off.
+    ...($('autoUpdate').disabled ? {} : { autoUpdate: $('autoUpdate').checked }),
     globalShortcut: $('globalShortcut').value.trim(),
   };
   const res = await api.saveSettings(patch);
