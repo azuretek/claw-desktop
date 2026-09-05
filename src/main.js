@@ -21,6 +21,7 @@ const chrome = require('./chrome');
 const connectionState = require('./connection');
 const menus = require('./menus');
 const noticeStore = require('./notices');
+const noticelog = require('./noticelog');
 const overlay = require('./overlay');
 const profile = require('./profile');
 const progress = require('./progress');
@@ -1209,6 +1210,16 @@ function hideLoadingCover() {
 // is a question, so none is a dialog.
 const notices = noticeStore.create();
 
+// The same failures, kept. The store above replaces a notice in place, which is
+// what a banner needs and is exactly why it can never show that the gateway
+// dropped five times overnight. Lazy, because app.getPath() is not answerable
+// until the app is ready and this module is loaded well before that.
+let noticeLogStore = null;
+function noticeLog() {
+  if (!noticeLogStore) noticeLogStore = noticelog.create({ dir: path.join(app.getPath('userData'), 'notice-log') });
+  return noticeLogStore;
+}
+
 // A view rather than part of a page, because it has to sit over the *gateway's*
 // page and this app injects nothing into that. Its own WebContents for the same
 // reason every other page of ours is one.
@@ -1276,7 +1287,13 @@ function setNotice(id, notice, ttlMs = 0) {
     clearTimeout(existing);
     noticeTimers.delete(id);
   }
-  if (notices.set(id, notice)) refreshBanner();
+  if (notices.set(id, notice)) {
+    // Read back from the store rather than logging the argument, so the default
+    // tone is applied in exactly one place and a notice raised without one is
+    // recorded as the error it actually became.
+    noticeLog().raised(notices.get(id));
+    refreshBanner();
+  }
   if (ttlMs > 0) {
     const timer = setTimeout(() => clearNotice(id), ttlMs);
     // Never a reason to hold the process open: an app whose last act is waiting
@@ -1292,7 +1309,10 @@ function clearNotice(id) {
     clearTimeout(timer);
     noticeTimers.delete(id);
   }
-  if (notices.clear(id)) refreshBanner();
+  if (notices.clear(id)) {
+    noticeLog().cleared(id);
+    refreshBanner();
+  }
 }
 
 /**

@@ -90,6 +90,18 @@ function create() {
     return notices.delete(id);
   }
 
+  /**
+   * The notice under this id, as stored, or null.
+   *
+   * As *stored*, which is the point: the defaults in set() have been applied,
+   * so a caller that omitted a tone reads back the error it actually raised
+   * rather than undefined. Anything mirroring a notice elsewhere should read it
+   * from here rather than from the argument it passed in.
+   */
+  function get(id) {
+    return notices.get(id) || null;
+  }
+
   /** Worst first, then oldest first. */
   function list() {
     return [...notices.values()].sort((a, b) => (RANK[a.tone] - RANK[b.tone]) || (a.order - b.order));
@@ -99,7 +111,7 @@ function create() {
     return notices.size;
   }
 
-  return { set, clear, list, size };
+  return { set, get, clear, list, size };
 }
 
 /**
