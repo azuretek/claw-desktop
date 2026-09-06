@@ -39,26 +39,46 @@
        Behaviour, where you would have to go looking for it. -->
   <div id="cert-offers"></div>
 
-  <h2>Gateways</h2>
-  <div id="gateways"></div>
+  <!-- Above the tabs on purpose, and the one thing that is. A refused
+       certificate is why this page opened when there is one, and a decision
+       filed behind a tab is a decision nobody makes. Everything else here is
+       something you came looking for; this is not. -->
 
-  <div class="card">
-    <div class="field">
-      <span>Add a gateway</span>
-      <input type="text" id="new-label" placeholder="Name (e.g. home)" autocomplete="off">
-    </div>
-    <div class="field">
-      <input type="url" id="new-url" placeholder="https://host.example.ts.net" autocomplete="off" spellcheck="false">
-    </div>
-    <div class="row">
-      <button id="test">Test connection</button>
-      <button id="add" class="primary">Add</button>
-    </div>
-    <div class="result" id="test-result"></div>
-  </div>
+  <!-- The tab labels are the section headings, which is why the <h2>s that used
+       to run down the page are gone. Two names for one section is one too many,
+       and the heading is the half that scrolls away. -->
+  <nav class="tabs" id="tabs" role="tablist" aria-label="Settings sections">
+    <button class="tab" type="button" role="tab" id="tab-gateways" aria-controls="panel-gateways" aria-selected="true">Gateways</button>
+    <button class="tab" type="button" role="tab" id="tab-behaviour" aria-controls="panel-behaviour" aria-selected="false" tabindex="-1">Behaviour</button>
+    <button class="tab" type="button" role="tab" id="tab-certificates" aria-controls="panel-certificates" aria-selected="false" tabindex="-1">Certificates</button>
+    <button class="tab" type="button" role="tab" id="tab-problems" aria-controls="panel-problems" aria-selected="false" tabindex="-1">
+      Problems<span class="tab__count" id="tab-problems-count" hidden></span>
+    </button>
+  </nav>
 
+  <section class="panel" id="panel-gateways" role="tabpanel" aria-labelledby="tab-gateways" tabindex="0">
+    <div id="gateways"></div>
+
+    <div class="card">
+      <div class="field">
+        <span>Add a gateway</span>
+        <input type="text" id="new-label" placeholder="Name (e.g. home)" autocomplete="off">
+      </div>
+      <div class="field">
+        <input type="url" id="new-url" placeholder="https://host.example.ts.net" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="row">
+        <button id="test">Test connection</button>
+        <button id="add" class="primary">Add</button>
+      </div>
+      <div class="result" id="test-result"></div>
+    </div>
+  </section>
+
+  <!-- Still one element, because a first run hides all three of these at once:
+       there is nothing to prefer, trust or have gone wrong yet. -->
   <section id="prefs" hidden>
-    <h2>Behaviour</h2>
+  <div class="panel" id="panel-behaviour" role="tabpanel" aria-labelledby="tab-behaviour" tabindex="0" hidden>
     <div class="card">
       <label class="check">
         <input type="checkbox" id="closeToTray">
@@ -103,17 +123,20 @@
         <button id="save" class="primary">Save preferences</button>
       </div>
     </div>
+  </div>
 
-    <h2>Trusted certificates</h2>
+  <div class="panel" id="panel-certificates" role="tabpanel" aria-labelledby="tab-certificates" tabindex="0" hidden>
     <div id="certs"></div>
+  </div>
 
-    <!-- What the banner said, after it stopped saying it. The banner keeps one
-         notice per condition so it stays readable, which is exactly why it can
-         never show that the gateway dropped five times overnight; this can. Read
-         from the monthly files in userData/notice-log, so it survives a restart,
-         which is the usual way the moment worth asking about passes. -->
-    <h2>Recent problems</h2>
+  <!-- What the banner said, after it stopped saying it. The banner keeps one
+       notice per condition so it stays readable, which is exactly why it can
+       never show that the gateway dropped five times overnight; this can. Read
+       from the monthly files in userData/notice-log, so it survives a restart,
+       which is the usual way the moment worth asking about passes. -->
+  <div class="panel" id="panel-problems" role="tabpanel" aria-labelledby="tab-problems" tabindex="0" hidden>
     <div id="notice-history"></div>
+  </div>
   </section>
 
   <!-- Outside #prefs on purpose: that section is hidden on a first run, and

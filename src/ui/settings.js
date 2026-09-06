@@ -453,19 +453,80 @@ function renderAbout() {
     `Claw Desktop ${state.build} · Electron ${state.versions.electron} · Chromium ${state.versions.chrome} · ${state.configPath}`;
 }
 
+/* ---------------------------------------------------------------- the tabs */
+
+// Order is the tab order, and the first is what opens. Gateways first because
+// it is the only one that is ever urgent: the reason to open this page at all
+// is usually that the app is pointed at the wrong thing.
+const TABS = ['gateways', 'behaviour', 'certificates', 'problems'];
+
+// The subtitle describes the tab, not the page. One fixed line under a tab bar
+// is wrong on three of the four tabs, and a heading that is wrong is worse than
+// no heading.
+const SUBTITLES = {
+  gateways: 'Choose which gateway this app connects to.',
+  behaviour: 'How the app starts, updates, and stays out of the way.',
+  certificates: 'Certificates you have chosen to trust for a host.',
+  problems: 'What went wrong, kept for three months.',
+};
+
+let tab = TABS[0];
+
+/**
+ * Show one panel and hide the rest.
+ *
+ * The scroll reset matters: panels differ in length, so switching from a long
+ * one to a short one otherwise lands you scrolled past the whole of it, looking
+ * at blank space and concluding the tab is empty.
+ */
+function showTab(name) {
+  if (!TABS.includes(name)) return;
+  tab = name;
+  for (const t of TABS) {
+    const on = t === name;
+    const button = $(`tab-${t}`);
+    const panel = $(`panel-${t}`);
+    if (button) {
+      button.setAttribute('aria-selected', String(on));
+      // Roving tabindex: the tab bar is one stop in the page's tab order, and
+      // the arrow keys move within it. Leaving every tab focusable makes Tab
+      // walk all four before reaching the panel they control.
+      button.tabIndex = on ? 0 : -1;
+    }
+    if (panel) panel.hidden = !on;
+  }
+  const body = document.querySelector('.modal__body');
+  if (body) body.scrollTop = 0;
+  renderHeading();
+}
+
+/** How many conditions are true right now, shown on the tab that lists them. */
+async function refreshProblemCount() {
+  const badge = $('tab-problems-count');
+  if (!badge) return;
+  let live = [];
+  try { live = await api.notices(); } catch { live = []; }
+  // From the live notices rather than the log's unresolved rows: a failure the
+  // app was killed during never got its clear written, so the log would call it
+  // open forever. The banner's own list is what "right now" means.
+  const active = live.filter((n) => n.tone === 'error' || n.tone === 'warn').length;
+  badge.textContent = String(active);
+  badge.hidden = active === 0;
+}
+
 /**
  * The heading.
  *
  * It used to carry the reason this page was on screen, because a failure put it
  * there and it owed an explanation for having taken over the window. Nothing
  * does that any more — a failure raises a notice and leaves the window alone —
- * so the page is only ever here because someone opened it, and it says what it
- * is.
+ * so the page is only ever here because someone opened it, and it says which
+ * part of itself you are looking at.
  */
 function renderHeading() {
   if (firstRun) return;
   $('title').textContent = 'Settings';
-  $('subtitle').textContent = 'Choose which gateway this app connects to.';
+  $('subtitle').textContent = SUBTITLES[tab] || SUBTITLES.gateways;
 }
 
 function render() {
@@ -553,6 +614,25 @@ if (!asPage) {
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') dismiss();
   });
+
+  // Left and right move between tabs, Home and End jump to the ends, which is
+  // what a tablist is expected to do and the reason the tabs carry a roving
+  // tabindex rather than all being in the page's tab order.
+  $('tabs').addEventListener('click', (e) => {
+    const button = e.target.closest('.tab');
+    if (button) showTab(button.id.replace(/^tab-/, ''));
+  });
+  $('tabs').addEventListener('keydown', (e) => {
+    const step = { ArrowRight: 1, ArrowLeft: -1 }[e.key];
+    let next = null;
+    if (step) next = TABS[(TABS.indexOf(tab) + step + TABS.length) % TABS.length];
+    else if (e.key === 'Home') next = TABS[0];
+    else if (e.key === 'End') next = TABS[TABS.length - 1];
+    if (!next) return;
+    e.preventDefault();
+    showTab(next);
+    $(`tab-${next}`).focus();
+  });
 }
 
 /* -------------------------------------------------------------------- boot */
@@ -576,14 +656,19 @@ api.onStateChanged(async () => {
   // prefer yet. A failed connection shows the whole page: the setting that
   // needs changing to fix it could be any of them.
   $('prefs').hidden = firstRun;
+  // On a first run there is nothing to prefer, trust, or have gone wrong yet, so
+  // three of the four tabs lead nowhere. One panel and no tab bar is the same
+  // page it was before tabs existed.
+  $('tabs').hidden = firstRun;
   $('close').hidden = asPage;
+  showTab(TABS[0]);
   render();
   // After the first paint rather than before it: the page is useful without the
   // log, and reading three months of files should not hold up the card.
-  if (!firstRun) loadHistory();
+  if (!firstRun) { loadHistory(); refreshProblemCount(); }
 })();
 
 // A notice going up or coming down is exactly when the log gained a line, so the
 // section is re-read then rather than polled. Open Settings, watch a gateway
 // fail, and the row appears underneath without reopening the page.
-api.onNoticesChanged(() => { if (!firstRun) loadHistory(); });
+api.onNoticesChanged(() => { if (!firstRun) { loadHistory(); refreshProblemCount(); } });

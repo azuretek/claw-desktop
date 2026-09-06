@@ -221,6 +221,43 @@ a  { color: var(--accent); }
 
 .sub { color: var(--muted); margin-bottom: 18px; }
 
+/* The page's sections, one at a time.
+   They were headings down a single column, which works up to about three and
+   then becomes a scroll where you cannot see what the page even contains. The
+   tab labels carry the wording the <h2>s used to, so the type here matches
+   them rather than inventing a second heading style. */
+.tabs {
+  display: flex; flex-wrap: wrap; gap: 2px;
+  margin: 22px 0 18px; border-bottom: 1px solid var(--border);
+}
+.tab {
+  appearance: none; background: transparent; border: 0;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+  padding: 8px 12px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 7px;
+  font: inherit; font-size: 12px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .07em; color: var(--muted);
+}
+.tab:hover { color: var(--text); }
+.tab[aria-selected="true"] { color: var(--text-strong); border-bottom-color: var(--accent); }
+/* Inset, because the underline sits on the container's own border and an
+   outline drawn outside the button is clipped by it. */
+.tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; border-radius: var(--radius-sm); }
+
+/* How many conditions are true right now, on the tab that lists them. Without
+   it, tabs would hide a live failure behind the tab you are not looking at,
+   which is the one thing this page cannot afford to do. */
+.tab__count {
+  font-size: 10px; font-weight: 700; line-height: 1; letter-spacing: 0;
+  background: var(--primary); color: var(--primary-foreground);
+  border-radius: var(--radius-full); padding: 3px 6px; min-width: 7px; text-align: center;
+}
+
+.panel[hidden] { display: none; }
+/* The first card in a panel sits directly under the tab bar, which already
+   provides the gap a heading's top margin used to. */
+.panel > :first-child { margin-top: 0; }
+
 .card {
   background: var(--panel);
   border: 1px solid var(--border);
