@@ -171,7 +171,15 @@ test('reading a log that was never written is empty, not an error', () => {
 test('an unwritable directory loses the line, never the app', () => {
   // The banner has already said the thing this line was about, so a log that
   // cannot write is not worth an exception on the path that reports failures.
-  const log = noticelog.create({ dir: '/dev/null/nope', now: () => Date.UTC(2026, 8, 5) });
+  //
+  // A directory *under a regular file* is the one way to be unwritable on every
+  // platform this ships to. The obvious `/dev/null/nope` is unwritable only on
+  // POSIX: Windows has no such path, happily creates the directory, and the test
+  // fails there and only there.
+  const blocker = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'claw-noticelog-')), 'a-file');
+  fs.writeFileSync(blocker, 'not a directory');
+
+  const log = noticelog.create({ dir: path.join(blocker, 'nope'), now: () => Date.UTC(2026, 8, 5) });
   assert.equal(log.raised(failure), false);
   assert.deepEqual(log.read(), []);
 });
