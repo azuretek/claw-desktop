@@ -153,3 +153,94 @@ test('every notice id is a literal, so the banner has a ceiling', () => {
     );
   }
 });
+
+/* -------------------------------------------------------------------- read */
+
+test('reading a notice takes it off the banner and leaves the condition', () => {
+  // The two are different questions. Clearing says the shortcut works now;
+  // reading says you have been told it does not.
+  const n = notices.create();
+  n.set('shortcut', { message: 'The shortcut was refused' });
+  assert.equal(n.markRead('shortcut'), true);
+  assert.equal(n.unread().length, 0, 'off the banner');
+  assert.equal(n.size(), 1, 'still true');
+  assert.equal(n.list()[0].read, true);
+});
+
+test('reading twice reports no change, so the banner is not re-rendered', () => {
+  const n = notices.create();
+  n.set('a', { message: 'x' });
+  assert.equal(n.markRead('a'), true);
+  assert.equal(n.markRead('a'), false);
+  assert.equal(n.markRead('never-existed'), false);
+});
+
+test('a notice arrives unread', () => {
+  const n = notices.create();
+  n.set('a', { message: 'x' });
+  assert.equal(n.list()[0].read, false);
+  assert.deepEqual(n.unread().map((x) => x.id), ['a']);
+});
+
+test('a condition that changes after being read comes back unread', () => {
+  // The failure that matters most: read "cannot connect: refused", then the
+  // reason becomes something else entirely. Staying read would hide the new
+  // reason under a banner that was already waved away.
+  const n = notices.create();
+  n.set('connection', { message: 'Cannot connect', detail: 'Refused.' });
+  n.markRead('connection');
+  assert.equal(n.unread().length, 0);
+
+  n.set('connection', { message: 'Cannot connect', detail: 'The name did not resolve.' });
+  assert.deepEqual(n.unread().map((x) => x.id), ['connection'], 'a different reason is news again');
+});
+
+test('an unchanged re-raise does not un-read a notice', () => {
+  // A gateway retrying every few seconds re-raises the identical notice. If
+  // that reopened the banner, reading it would be impossible.
+  const n = notices.create();
+  const same = { message: 'Cannot connect', detail: 'Refused.' };
+  n.set('connection', same);
+  n.markRead('connection');
+  assert.equal(n.set('connection', same), false);
+  assert.equal(n.unread().length, 0, 'still read, because nothing changed');
+});
+
+test('marking all read empties the banner in one go', () => {
+  const n = notices.create();
+  n.set('a', { message: 'a' });
+  n.set('b', { tone: notices.WARN, message: 'b' });
+  assert.equal(n.markAllRead(), true);
+  assert.equal(n.unread().length, 0);
+  assert.equal(n.size(), 2, 'nothing was cleared');
+  assert.equal(n.markAllRead(), false, 'and again is a no-op');
+});
+
+test('a notice that cannot be dismissed cannot be bulk-read either', () => {
+  // The finished update download. Losing it means waiting for the next check to
+  // find a version already sitting on disk, and a bulk action is exactly how it
+  // would get lost.
+  const n = notices.create();
+  n.set('a', { message: 'ordinary' });
+  n.set('update-available', { tone: notices.OK, message: 'Ready to restart', dismissible: false });
+
+  n.markAllRead();
+  assert.deepEqual(n.unread().map((x) => x.id), ['update-available'], 'it survives the sweep');
+});
+
+test('a notice that cannot be dismissed can still be read one at a time', () => {
+  // markAllRead protects it from a sweep aimed at everything else. An explicit
+  // instruction about that one notice is not that.
+  const n = notices.create();
+  n.set('update-available', { tone: notices.OK, message: 'Ready', dismissible: false });
+  assert.equal(n.markRead('update-available'), true);
+  assert.equal(n.unread().length, 0);
+});
+
+test('unread keeps the banner ordering, worst first', () => {
+  const n = notices.create();
+  n.set('ok', { tone: notices.OK, message: 'fine' });
+  n.set('err', { tone: notices.ERROR, message: 'broken' });
+  n.set('warn', { tone: notices.WARN, message: 'iffy' });
+  assert.deepEqual(n.unread().map((x) => x.id), ['err', 'warn', 'ok']);
+});

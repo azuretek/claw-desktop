@@ -460,6 +460,16 @@ function renderAbout() {
 // is usually that the app is pointed at the wrong thing.
 const TABS = ['gateways', 'behaviour', 'certificates', 'problems'];
 
+// A first run has nothing to prefer and nothing has gone wrong yet, so those two
+// tabs lead nowhere. Certificates stays, because refusing a gateway's own
+// certificate is often the very first thing that happens.
+const FIRST_RUN_TABS = ['gateways', 'certificates'];
+
+/** The tabs that exist right now. Arrow keys walk these, not TABS. */
+function visibleTabs() {
+  return firstRun ? FIRST_RUN_TABS : TABS;
+}
+
 // The subtitle describes the tab, not the page. One fixed line under a tab bar
 // is wrong on three of the four tabs, and a heading that is wrong is worse than
 // no heading.
@@ -480,13 +490,14 @@ let tab = TABS[0];
  * at blank space and concluding the tab is empty.
  */
 function showTab(name) {
-  if (!TABS.includes(name)) return;
+  if (!visibleTabs().includes(name)) return;
   tab = name;
   for (const t of TABS) {
     const on = t === name;
     const button = $(`tab-${t}`);
     const panel = $(`panel-${t}`);
     if (button) {
+      button.hidden = !visibleTabs().includes(t);
       button.setAttribute('aria-selected', String(on));
       // Roving tabindex: the tab bar is one stop in the page's tab order, and
       // the arrow keys move within it. Leaving every tab focusable makes Tab
@@ -505,10 +516,13 @@ async function refreshProblemCount() {
   const badge = $('tab-problems-count');
   if (!badge) return;
   let live = [];
-  try { live = await api.notices(); } catch { live = []; }
-  // From the live notices rather than the log's unresolved rows: a failure the
-  // app was killed during never got its clear written, so the log would call it
-  // open forever. The banner's own list is what "right now" means.
+  // liveNotices, not notices: the latter is the banner's unread list, and a
+  // failure you have read is still a failure. A count that emptied when you
+  // closed the bar would say the app was fine because you stopped looking.
+  try { live = await api.liveNotices(); } catch { live = []; }
+  // Live conditions rather than the log's unresolved rows: a failure the app was
+  // killed during never got its clear written, so the log would call it open
+  // forever.
   const active = live.filter((n) => n.tone === 'error' || n.tone === 'warn').length;
   badge.textContent = String(active);
   badge.hidden = active === 0;
@@ -533,7 +547,11 @@ function render() {
   renderHeading();
   renderGateways();
   renderAbout();
-  if (!firstRun) { renderCertOffers(); renderCerts(); renderPrefs(); renderNoticeHistory(); }
+  // Certificates renders on a first run too: its panel is reachable then, and a
+  // refused certificate is one of the likeliest things to happen during setup.
+  renderCertOffers();
+  renderCerts();
+  if (!firstRun) { renderPrefs(); renderNoticeHistory(); }
 }
 
 function setResult(node, text, kind) {
@@ -623,11 +641,12 @@ if (!asPage) {
     if (button) showTab(button.id.replace(/^tab-/, ''));
   });
   $('tabs').addEventListener('keydown', (e) => {
+    const walk = visibleTabs();
     const step = { ArrowRight: 1, ArrowLeft: -1 }[e.key];
     let next = null;
-    if (step) next = TABS[(TABS.indexOf(tab) + step + TABS.length) % TABS.length];
-    else if (e.key === 'Home') next = TABS[0];
-    else if (e.key === 'End') next = TABS[TABS.length - 1];
+    if (step) next = walk[(walk.indexOf(tab) + step + walk.length) % walk.length];
+    else if (e.key === 'Home') next = walk[0];
+    else if (e.key === 'End') next = walk[walk.length - 1];
     if (!next) return;
     e.preventDefault();
     showTab(next);
@@ -656,12 +675,13 @@ api.onStateChanged(async () => {
   // prefer yet. A failed connection shows the whole page: the setting that
   // needs changing to fix it could be any of them.
   $('prefs').hidden = firstRun;
-  // On a first run there is nothing to prefer, trust, or have gone wrong yet, so
-  // three of the four tabs lead nowhere. One panel and no tab bar is the same
-  // page it was before tabs existed.
-  $('tabs').hidden = firstRun;
+  // The bar stays on a first run, showing the two tabs that mean anything then.
+  // showTab hides the buttons for the rest.
   $('close').hidden = asPage;
-  showTab(TABS[0]);
+  // A notice can name the tab that answers it, so "Review" on a refused
+  // certificate lands on the fingerprints rather than on Gateways with the work
+  // of finding them left to you.
+  showTab(TABS.includes(params.get('tab')) ? params.get('tab') : TABS[0]);
   render();
   // After the first paint rather than before it: the page is useful without the
   // log, and reading three months of files should not hold up the card.

@@ -362,6 +362,16 @@ body.banner-body { background: transparent; overflow: hidden; }
 }
 .banner__close:hover { background: var(--bg-hover); color: var(--text-strong); }
 
+/* Closing the whole bar. Right-aligned under the cards and deliberately quiet:
+   it is the way out, not the point, and the notices above it are. */
+.banner-actions { display: flex; justify-content: flex-end; }
+.banner__readall {
+  padding: 3px 9px;
+  background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm);
+  font-size: 11.5px; color: var(--muted); cursor: pointer;
+}
+.banner__readall:hover { background: var(--bg-hover); border-color: var(--border-strong); color: var(--text-strong); }
+
 /* --------------------------------------------------------------- loading */
 
 /* The cover shown while there is no gateway page to show. Opaque `--bg`, not a

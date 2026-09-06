@@ -78,11 +78,49 @@ function create() {
       detail,
       dismissible,
       action: action ? { label: action.label, command: action.command } : null,
+      // Unread, always, because reaching here means something changed. A
+      // condition that has been read and then says something different is new
+      // news, and leaving it read would let a failure change under a banner
+      // that has already been waved away.
+      read: false,
       // Insertion order within a severity, so a new warning appears below an
       // older one rather than shuffling what someone is reading.
       order: previous ? previous.order : seq++,
     });
     return true;
+  }
+
+  /**
+   * Seen, but still true.
+   *
+   * Distinct from clear(), and the distinction is the point: clearing says the
+   * condition passed, reading says you know about it. A read notice leaves the
+   * banner and stays in the store, so the app still knows the shortcut is
+   * refused and can still say so where being told twice is not an interruption.
+   */
+  function markRead(id) {
+    const notice = notices.get(id);
+    if (!notice || notice.read) return false;
+    notice.read = true;
+    return true;
+  }
+
+  /**
+   * Read everything that can be read.
+   *
+   * A notice that is not dismissible is not markable either. The one that
+   * carries it is the finished update download, kept because losing it means
+   * waiting for the next check to find a version that is already on disk, and a
+   * bulk action is exactly how it would get lost.
+   */
+  function markAllRead() {
+    let changed = false;
+    for (const notice of notices.values()) {
+      if (notice.dismissible === false || notice.read) continue;
+      notice.read = true;
+      changed = true;
+    }
+    return changed;
   }
 
   /** The condition passed. Returns whether there was anything to clear. */
@@ -102,16 +140,28 @@ function create() {
     return notices.get(id) || null;
   }
 
-  /** Worst first, then oldest first. */
+  /** Every condition that is still true, worst first, then oldest first. */
   function list() {
     return [...notices.values()].sort((a, b) => (RANK[a.tone] - RANK[b.tone]) || (a.order - b.order));
+  }
+
+  /**
+   * What the banner draws: the conditions nobody has acknowledged yet.
+   *
+   * The banner is the only surface filtered this way. Everywhere else wants
+   * list(), because "is the shortcut still refused" and "have you been told the
+   * shortcut is refused" are different questions and only the banner is asking
+   * the second one.
+   */
+  function unread() {
+    return list().filter((n) => !n.read);
   }
 
   function size() {
     return notices.size;
   }
 
-  return { set, get, clear, list, size };
+  return { set, get, markRead, markAllRead, clear, list, unread, size };
 }
 
 /**

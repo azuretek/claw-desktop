@@ -36,11 +36,19 @@ function report() {
   void api.bannerHeight(height);
 }
 
+// The one node in the stack that is not a notice. It is rebuilt outright on
+// every render rather than kept, which is the opposite of how the cards are
+// handled and fine here: there is no slide to replay and nothing to preserve.
+const ACTIONS_ID = 'banner-actions';
+
 function card(notice) {
+  // Marks it read: the condition carries on, the app just stops saying so. It
+  // was a delete until notices could be read, which meant waving away a refused
+  // shortcut destroyed the app's own record that it was refused.
   const dismiss = notice.dismissible === false ? null : el('button', {
     className: 'banner__close',
     type: 'button',
-    title: 'Dismiss',
+    title: 'Mark read. It stays listed under Settings, Problems.',
     textContent: '✕',
     onclick: () => { void api.dismissNotice(notice.id); },
   });
@@ -65,6 +73,29 @@ function card(notice) {
   ]);
 }
 
+/**
+ * Close the bar, meaning read everything on it.
+ *
+ * One control for the whole stack rather than only per-card, because the thing
+ * you want after a bad morning is the bar gone, and doing that a card at a time
+ * is a chore that ends with one left over.
+ *
+ * Nothing here can lose a condition: reading is not clearing, and a notice that
+ * refuses to be dismissed refuses this too, so the finished update download
+ * survives the sweep.
+ */
+function actions() {
+  return el('div', { className: 'banner-actions', id: ACTIONS_ID }, [
+    el('button', {
+      className: 'banner__readall',
+      type: 'button',
+      title: 'Close the bar. Anything still true stays listed under Settings, Problems.',
+      textContent: 'Mark all read',
+      onclick: () => { void api.markNoticesRead(); },
+    }),
+  ]);
+}
+
 async function render() {
   const notices = await api.notices();
   // Rebuild only what changed, keyed by id. Replacing the whole list every time
@@ -81,6 +112,12 @@ async function render() {
     if (existing) existing.replaceWith(next);
     else stack.append(next);
   }
+
+  // Rebuilt last every time, so it stays at the bottom as cards come and go,
+  // and absent when the only thing left is a notice it would not act on.
+  const previous = document.getElementById(ACTIONS_ID);
+  if (previous) previous.remove();
+  if (notices.some((n) => n.dismissible !== false)) stack.append(actions());
 
   report();
 }

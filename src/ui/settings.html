@@ -37,13 +37,6 @@
        the reason this page was opened at all when there is one — the failure
        notice links straight here — so it must not sit below Gateways and
        Behaviour, where you would have to go looking for it. -->
-  <div id="cert-offers"></div>
-
-  <!-- Above the tabs on purpose, and the one thing that is. A refused
-       certificate is why this page opened when there is one, and a decision
-       filed behind a tab is a decision nobody makes. Everything else here is
-       something you came looking for; this is not. -->
-
   <!-- The tab labels are the section headings, which is why the <h2>s that used
        to run down the page are gone. Two names for one section is one too many,
        and the heading is the half that scrolls away. -->
@@ -77,6 +70,22 @@
 
   <!-- Still one element, because a first run hides all three of these at once:
        there is nothing to prefer, trust or have gone wrong yet. -->
+  <!-- Outside #prefs, unlike the other two, because a first run is exactly
+       when this is needed: a gateway on its own :18789 listener presents a
+       certificate nothing has pinned yet, and refusing it is the first thing
+       that happens, so this tab stays reachable during setup. -->
+  <div class="panel" id="panel-certificates" role="tabpanel" aria-labelledby="tab-certificates" tabindex="0" hidden>
+    <!-- First in the panel, and empty almost always. This used to sit above
+         everything on the page, because a decision filed under a heading is a
+         decision nobody makes. It can live behind a tab now that a refused
+         certificate raises a banner, which is on screen whichever tab you are
+         on and whose Review lands you right here. The banner carries the alarm;
+         this carries the two fingerprints and the two answers, which is more
+         than a notice can hold. -->
+    <div id="cert-offers"></div>
+    <div id="certs"></div>
+  </div>
+
   <section id="prefs" hidden>
   <div class="panel" id="panel-behaviour" role="tabpanel" aria-labelledby="tab-behaviour" tabindex="0" hidden>
     <div class="card">
@@ -123,10 +132,6 @@
         <button id="save" class="primary">Save preferences</button>
       </div>
     </div>
-  </div>
-
-  <div class="panel" id="panel-certificates" role="tabpanel" aria-labelledby="tab-certificates" tabindex="0" hidden>
-    <div id="certs"></div>
   </div>
 
   <!-- What the banner said, after it stopped saying it. The banner keeps one

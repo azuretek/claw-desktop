@@ -44,9 +44,15 @@ if (isLocalPage) {
 
     /* The banner: conditions that stay until they are fixed. `bannerHeight` is
        the page telling main how tall to make its view — see ui/banner.js. */
+    // Unread only: the banner draws what has not been acknowledged. Everything
+    // still true, read or not, is liveNotices.
     notices: () => ipcRenderer.invoke('app:notices'),
+    liveNotices: () => ipcRenderer.invoke('app:live-notices'),
     bannerHeight: (height) => ipcRenderer.invoke('app:banner-height', height),
+    // Marks read rather than clearing. The condition carries on; the app just
+    // stops saying so.
     dismissNotice: (id) => ipcRenderer.invoke('app:dismiss-notice', id),
+    markNoticesRead: () => ipcRenderer.invoke('app:mark-notices-read'),
     // A notice's one offer, by name. Main runs only the commands it recognises,
     // so the page can ask for what it was offered and nothing else.
     noticeAction: (command) => ipcRenderer.invoke('app:notice-action', command),

@@ -953,6 +953,10 @@ function overlaySearch(opts = {}) {
   // hides the preferences, which being the window's content does not imply.
   if (opts.page || opts.firstRun) params.set('page', '1');
   if (chrome.enabled()) params.set('frameless', '1');
+  // Which tab to land on, for the notices whose whole offer is "the thing that
+  // answers me is on that tab". Opening Settings and leaving someone to find it
+  // is most of the way to not having said anything.
+  if (opts.tab) params.set('tab', String(opts.tab));
   return `?${params}`;
 }
 
@@ -1029,14 +1033,14 @@ function closeOverlay(name) {
   if (name === 'settings') clearNotice('connected');
 }
 
-function openSettings() {
+function openSettings(opts = {}) {
   // On first run the main window is already showing this page full-size; a
   // modal of the same thing over the top of itself is not an improvement.
   if (settingsIsPage) {
     showMainWindow();
     return null;
   }
-  return openOverlay('settings');
+  return openOverlay('settings', opts);
 }
 
 function closeSettings() {
@@ -1232,7 +1236,10 @@ let bannerHeight = 0;
 
 function refreshBanner() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  if (!notices.size()) {
+  // Unread rather than size: a condition that has been read is still true and
+  // still in the store, and the bar has to come down anyway or reading it would
+  // leave an empty strip eating clicks on the Control UI underneath.
+  if (!notices.unread().length) {
     if (bannerView) {
       try { mainWindow.contentView.removeChildView(bannerView); } catch { /* window gone */ }
       try { if (!bannerView.webContents.isDestroyed()) bannerView.webContents.close(); } catch { /* gone */ }
@@ -1483,6 +1490,53 @@ const UPDATE_ANSWER = 'update-answer';
 // question nobody is still asking takes itself away. Only ever used for a reply
 // to something the user pressed; a real problem has no timeout.
 const ANSWER_TTL_MS = 9000;
+
+/**
+ * The banner half of a refused certificate.
+ *
+ * The decision itself cannot be a banner: it needs two fingerprints side by
+ * side and two answers, and a notice offers one action by design, because a
+ * notice that needs two buttons is a question and a question is a dialog. So
+ * the banner carries the alarm and the tab carries the comparison.
+ *
+ * This is what lets the certificate section live behind a tab at all. It used
+ * to sit above everything on the Settings page, on the reasoning that a
+ * decision filed under a heading is a decision nobody makes, and that reasoning
+ * was right while the page was the only place it could be said.
+ *
+ * One notice however many hosts are waiting, because the id is fixed. A per-host
+ * id would stack the banner without limit, which is the thing the ceiling test
+ * in test/notices.test.js exists to prevent.
+ */
+function refreshCertNotice() {
+  const offers = certs.pendingOffers();
+  if (!offers.length) {
+    clearNotice('cert-offer');
+    return;
+  }
+
+  const changed = offers.filter((o) => o.changed);
+  const only = offers.length === 1 ? offers[0] : null;
+  // A first sighting on a :18789 address is routine. A fingerprint that moved
+  // on a host already trusted is the one worth alarming about, and the two must
+  // not look alike.
+  const alarming = changed.length > 0;
+
+  let message;
+  if (only && only.changed) message = `The certificate for ${only.host} has changed since it was trusted.`;
+  else if (only) message = `${only.host} is using a certificate this app cannot verify.`;
+  else if (alarming) message = `${offers.length} certificates need review, ${changed.length} of them changed.`;
+  else message = `${offers.length} certificates need review.`;
+
+  setNotice('cert-offer', {
+    tone: alarming ? noticeStore.ERROR : noticeStore.WARN,
+    message,
+    detail: alarming
+      ? 'The connection stays refused until you decide. Expected if the gateway was reinstalled; worth a hard look if not.'
+      : 'The connection stays refused until you decide. Normal for a gateway reached on its own :18789 listener.',
+    action: { label: 'Review', command: 'certificates' },
+  });
+}
 
 /** Record how a check ended, and push it to an About box that is on screen. */
 function setLastCheck(result) {
@@ -2033,10 +2087,14 @@ function registerIpc() {
     let activeHost = null;
     try { activeHost = gw ? new URL(gw.url).host : null; } catch { /* unparseable url, no reconnect */ }
     if (offer && offer.host === activeHost) loadActiveGateway();
+    // The offer is answered, so the banner about it goes. clearNotice only when
+    // this was the last one waiting; refreshCertNotice decides that.
+    refreshCertNotice();
     return { ...currentState(), trusted: Boolean(offer) };
   });
   ipcMain.handle('app:dismiss-cert-offer', (_e, host) => {
     certs.dismiss(String(host));
+    refreshCertNotice();
     return currentState();
   });
   ipcMain.handle('app:forget-cert', (_e, host) => {
@@ -2078,14 +2136,30 @@ function registerIpc() {
   ipcMain.handle('app:open-releases', () => shell.openExternal(RELEASES_URL));
   // The banner. It reports the height it needs rather than being given one: the
   // view swallows clicks over its whole rect, so main cannot guess at it.
-  ipcMain.handle('app:notices', () => notices.list());
+  // What the banner draws, which is only what has not been acknowledged.
+  ipcMain.handle('app:notices', () => notices.unread());
   ipcMain.handle('app:banner-height', (_e, height) => {
     const next = Math.max(0, Math.min(400, Math.ceil(Number(height) || 0)));
     if (next === bannerHeight) return;
     bannerHeight = next;
     layoutViews();
   });
-  ipcMain.handle('app:dismiss-notice', (_e, id) => { clearNotice(String(id)); });
+  // Reads rather than clears. The X on a card means "I have seen this", not
+  // "this is fixed", and the two used to be the same button: waving away a
+  // refused shortcut deleted the app's own knowledge that it was refused.
+  ipcMain.handle('app:dismiss-notice', (_e, id) => {
+    if (notices.markRead(String(id))) refreshBanner();
+  });
+  // Closing the bar is the same act aimed at everything on it. Anything not
+  // dismissible is left alone, so a finished update download does not go down
+  // with the sweep.
+  ipcMain.handle('app:mark-notices-read', () => {
+    if (notices.markAllRead()) refreshBanner();
+  });
+  // Everything still true, read or not. The banner asks for unread; Settings
+  // asks for this, because "how many things are broken" is not the same question
+  // as "how many things have you not been told about".
+  ipcMain.handle('app:live-notices', () => notices.list());
   // The same failures the banner showed, after the banner let them go. Paired
   // into rows here rather than in the page, because pairing a raise with its
   // clear has a rule in it and the page should not be the place that rule lives.
@@ -2100,6 +2174,8 @@ function registerIpc() {
   ipcMain.handle('app:notice-action', (_e, command) => {
     const commands = {
       settings: () => openSettings(),
+      // Straight to the tab holding the two fingerprints and the two answers.
+      certificates: () => openSettings({ tab: 'certificates' }),
       reconnect: () => loadActiveGateway(),
       // Get out of the way and show what is already loaded behind. Also clears
       // the notice: unlike every other one here, this condition is *answered* by
@@ -2164,6 +2240,7 @@ if (!app.requestSingleInstanceLock()) {
     certs.install(app, {
       onOffer: (offer) => {
         console.warn(`[claw] refused ${offer.changed ? 'CHANGED' : 'untrusted'} certificate for ${offer.host} (${offer.fingerprint})`);
+        refreshCertNotice();
         notifyStateChanged();
       },
     });
