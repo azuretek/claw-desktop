@@ -22,6 +22,10 @@ let state = null;
 // Which gateway's credential editor is open. Kept across re-renders so saving a
 // field does not collapse the panel you are working in.
 let editing = null;
+// The failure log, once read. Null is not the same as empty: an empty section
+// drawn before the answer arrives says nothing has ever gone wrong, and that is
+// a claim this page has no business making until it has looked.
+let history = null;
 
 /* Build DOM nodes rather than assigning innerHTML: labels and URLs are
    user-supplied strings, and this page has no business parsing them as HTML. */
@@ -318,6 +322,85 @@ function renderCertOffers() {
   }
 }
 
+/* ------------------------------------------------------------ what happened */
+
+// Rows shown on the page. The files hold three months, which is a thing to grep
+// rather than scroll, so the page shows the recent ones and offers the folder
+// for the rest. Without a cap, one bad night puts hundreds of rows under the
+// preferences and buries them.
+const HISTORY_SHOWN = 20;
+
+/** A timestamp as a person reads it, in their own locale and zone. */
+function when(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+/**
+ * How long it went on, in the largest unit that is still honest.
+ *
+ * A null end is not a missing value: it means the raise was never answered by a
+ * clear, so as far as the record goes the condition is still true. Saying so is
+ * the point, since an open failure is the one worth looking at.
+ */
+function lasted(from, to) {
+  if (!to) return 'still happening';
+  const ms = Date.parse(to) - Date.parse(from);
+  if (!Number.isFinite(ms) || ms < 0) return '';
+  // Tested against the duration, not the rounded minutes: rounding 40 seconds
+  // gives 1, which walks straight past a `mins < 1` guard and reports a blip as
+  // a minute-long outage.
+  if (ms < 60000) return 'lasted under a minute';
+  const mins = Math.round(ms / 60000);
+  if (mins < 60) return `lasted ${mins} min`;
+  const hours = Math.round(mins / 60);
+  if (hours < 48) return `lasted ${hours} h`;
+  return `lasted ${Math.round(hours / 24)} days`;
+}
+
+function renderNoticeHistory() {
+  const host = $('notice-history');
+  if (!host) return;
+  host.replaceChildren();
+
+  if (history === null) return; // not read yet; an empty card would be a lie
+  if (!history.length) {
+    host.append(el('div', { className: 'card empty', textContent: 'Nothing has gone wrong that the app noticed.' }));
+    return;
+  }
+
+  for (const row of history.slice(0, HISTORY_SHOWN)) {
+    host.append(el('div', { className: 'card' }, el('div', { className: 'row' }, [
+      el('div', { className: 'stack grow' }, [
+        el('span', { className: 'name', textContent: row.message }),
+        row.detail ? el('span', { className: 'url', textContent: row.detail }) : null,
+        el('span', { className: 'muted-sm', textContent: [when(row.from), lasted(row.from, row.to)].filter(Boolean).join(' · ') }),
+      ]),
+      el('span', {
+        className: `badge badge--${row.tone === 'error' ? 'err' : 'warn'}`,
+        textContent: row.tone === 'error' ? 'Error' : 'Warning',
+      }),
+    ])));
+  }
+
+  host.append(el('div', { className: 'row' }, [
+    el('span', {
+      className: 'muted-sm grow',
+      textContent: history.length > HISTORY_SHOWN
+        ? `Showing the ${HISTORY_SHOWN} most recent of ${history.length} kept.`
+        : 'Kept for three months, a file per month.',
+    }),
+    el('button', { className: 'ghost', textContent: 'Open log folder', onclick: () => api.openNoticeLog() }),
+  ]));
+}
+
+/** Read the log and redraw. Failure leaves the section empty rather than the page broken. */
+async function loadHistory() {
+  try { history = await api.noticeHistory(); } catch { history = []; }
+  renderNoticeHistory();
+}
+
 function renderCerts() {
   const host = $('certs');
   host.replaceChildren();
@@ -389,7 +472,7 @@ function render() {
   renderHeading();
   renderGateways();
   renderAbout();
-  if (!firstRun) { renderCertOffers(); renderCerts(); renderPrefs(); }
+  if (!firstRun) { renderCertOffers(); renderCerts(); renderPrefs(); renderNoticeHistory(); }
 }
 
 function setResult(node, text, kind) {
@@ -495,4 +578,12 @@ api.onStateChanged(async () => {
   $('prefs').hidden = firstRun;
   $('close').hidden = asPage;
   render();
+  // After the first paint rather than before it: the page is useful without the
+  // log, and reading three months of files should not hold up the card.
+  if (!firstRun) loadHistory();
 })();
+
+// A notice going up or coming down is exactly when the log gained a line, so the
+// section is re-read then rather than polled. Open Settings, watch a gateway
+// fail, and the row appears underneath without reopening the page.
+api.onNoticesChanged(() => { if (!firstRun) loadHistory(); });

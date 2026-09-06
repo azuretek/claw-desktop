@@ -2086,6 +2086,14 @@ function registerIpc() {
     layoutViews();
   });
   ipcMain.handle('app:dismiss-notice', (_e, id) => { clearNotice(String(id)); });
+  // The same failures the banner showed, after the banner let them go. Paired
+  // into rows here rather than in the page, because pairing a raise with its
+  // clear has a rule in it and the page should not be the place that rule lives.
+  ipcMain.handle('app:notice-history', () => noticeLog().sessions());
+  // Opening the folder is offered because the files outlive the page's view of
+  // them: Settings shows what is still on disk, and three months of JSON Lines
+  // is a thing to grep, not to scroll.
+  ipcMain.handle('app:open-notice-log', () => shell.openPath(noticeLog().dir));
   // A notice's one offer. A lookup rather than a dispatch, so a page can only
   // ever reach a command that was written here — the renderer names it, it does
   // not describe it, and an unknown name is nothing rather than an error.

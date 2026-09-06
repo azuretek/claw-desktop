@@ -106,6 +106,14 @@
 
     <h2>Trusted certificates</h2>
     <div id="certs"></div>
+
+    <!-- What the banner said, after it stopped saying it. The banner keeps one
+         notice per condition so it stays readable, which is exactly why it can
+         never show that the gateway dropped five times overnight; this can. Read
+         from the monthly files in userData/notice-log, so it survives a restart,
+         which is the usual way the moment worth asking about passes. -->
+    <h2>Recent problems</h2>
+    <div id="notice-history"></div>
   </section>
 
   <!-- Outside #prefs on purpose: that section is hidden on a first run, and

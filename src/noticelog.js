@@ -177,7 +177,10 @@ function create({ dir, now = Date.now, keepMonths = KEEP_MONTHS, maxBytes = MAX_
     return rows.reverse();
   }
 
-  return { raised, cleared, read, sessions, prune, fileFor };
+  // `dir` is exposed because opening the folder is a supported way to read this:
+  // the files are plain JSON Lines precisely so that a person, or grep, can get
+  // at a failure the Settings page has since aged out of its own view.
+  return { raised, cleared, read, sessions, prune, fileFor, dir };
 }
 
 module.exports = { create, monthOf, LOGGED_TONES, KEEP_MONTHS, MAX_BYTES };

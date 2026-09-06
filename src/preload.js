@@ -51,6 +51,11 @@ if (isLocalPage) {
     // so the page can ask for what it was offered and nothing else.
     noticeAction: (command) => ipcRenderer.invoke('app:notice-action', command),
     onNoticesChanged: (fn) => ipcRenderer.on('app:notices-changed', () => fn()),
+    // The same failures after the banner has let them go. Read-only on purpose:
+    // a page can ask what happened and has no way to write a line or delete one,
+    // so the record cannot be edited by the thing displaying it.
+    noticeHistory: () => ipcRenderer.invoke('app:notice-history'),
+    openNoticeLog: () => ipcRenderer.invoke('app:open-notice-log'),
     // The loading cover, shown while connecting and after a failure. The bar and
     // its line are computed in main and pushed — see the progress section in
     // src/main.js for why the page is not given the curve to run itself.
