@@ -125,6 +125,37 @@ function clientScript(config) {
       } catch (error) {}
       return originalSend.call(this, data);
     };
+
+    var originalAddEventListener = WebSocket.prototype.addEventListener;
+    WebSocket.prototype.addEventListener = function(type, listener, options) {
+      if (type === 'message' && typeof listener === 'function') {
+        var originalListener = listener;
+        listener = function(event) {
+          try {
+            if (typeof event.data === 'string' && event.data.indexOf('<claw_desktop_context>') !== -1) {
+              var cleanData = event.data.replace(/<claw_desktop_context>[\\s\\S]*?<\\/claw_desktop_context>(?:\\\\n|\\\\r|\\n|\\r)*/g, '');
+              Object.defineProperty(event, 'data', { value: cleanData });
+            }
+          } catch (e) {}
+          return originalListener.call(this, event);
+        };
+      }
+      return originalAddEventListener.call(this, type, listener, options);
+    };
+
+    var originalMessageSetter = Object.getOwnPropertyDescriptor(WebSocket.prototype, 'onmessage');
+    if (originalMessageSetter) {
+      Object.defineProperty(WebSocket.prototype, 'onmessage', {
+        set: function(listener) {
+          if (typeof listener === 'function') {
+            this.addEventListener('message', listener);
+          } else {
+            originalMessageSetter.set.call(this, listener);
+          }
+        },
+        get: originalMessageSetter.get
+      });
+    }
   })();`;
 }
 
