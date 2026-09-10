@@ -2,16 +2,34 @@
 
 const os = require('node:os');
 
-const BLOCK_START = '<claw_desktop_context>';
-const BLOCK_END = '</claw_desktop_context>';
+// The marker OpenClaw already owns for inbound context.
+//
+// Adopting it is what lets the gateway strip this block for us. OpenClaw's
+// stripInboundMetadata removes any block whose HEADER LINE ENDS WITH this token,
+// from user-facing and display text and from replayed past turns, while the
+// active turn keeps its metadata so the model still sees the block on the turn
+// it was sent. That is the same contract the gateway's own "Conversation info"
+// block rides on, so this app needs no upstream change and no code of its own
+// to suppress the block once it has been displayed.
+//
+// Two shape rules come from that stripper and are load-bearing:
+//   1. the header must END with the marker, and
+//   2. a prose block runs until a blank line, so the prompt must be separated
+//      from the block by one. `inject` owns that separator.
+const CONTEXT_MARKER = '\u27E6openclaw:ctx\u27E7';
+const CONTEXT_HEADER = `Desktop client context: ${CONTEXT_MARKER}`;
 const MAX_VALUE_LENGTH = 256;
 
 /** Keep machine-controlled values on one bounded line inside the prompt block. */
 function clean(value, fallback = 'unknown') {
   const text = String(value ?? '')
     .replace(/[\u0000-\u001f\u007f]/g, ' ')
-    .replace(/</g, '‹')
-    .replace(/>/g, '›')
+    // Angle brackets and the marker itself are neutralised so no value can
+    // forge a header line or close the block early.
+    .replace(/</g, '\u2039')
+    .replace(/>/g, '\u203A')
+    .split(CONTEXT_MARKER)
+    .join(' ')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, MAX_VALUE_LENGTH);
@@ -56,7 +74,7 @@ function collectMetadata({
 
 function formatBlock(metadata) {
   return [
-    BLOCK_START,
+    CONTEXT_HEADER,
     `host: ${clean(metadata.host)}`,
     `os: ${clean(metadata.os)}`,
     `user: ${clean(metadata.user)}`,
@@ -64,7 +82,6 @@ function formatBlock(metadata) {
     `locale: ${clean(metadata.locale)}`,
     `timezone: ${clean(metadata.timezone)}`,
     `client: ${clean(metadata.client)}`,
-    BLOCK_END,
   ].join('\n');
 }
 
@@ -72,7 +89,7 @@ function shouldInject(message) {
   if (typeof message !== 'string' || !message.trim()) return false;
   // A prefix would stop OpenClaw recognising a slash command as a command.
   if (/^\/\S/.test(message.trimStart())) return false;
-  return !message.includes(BLOCK_START);
+  return !message.includes(CONTEXT_HEADER);
 }
 
 function inject(message, block) {
@@ -86,7 +103,7 @@ function transformFrame(data, { enabled, block } = {}) {
   if (!enabled || typeof data !== 'string' || !data.startsWith('{')) return data;
   try {
     const payload = JSON.parse(data);
-    if (payload?.method !== 'chat.send' || typeof payload?.params?.message !== 'string') {
+    if (payload?.method !== 'chat.send' || typeof payload.params?.message !== 'string') {
       return data;
     }
     const message = inject(payload.params.message, block);
@@ -99,17 +116,23 @@ function transformFrame(data, { enabled, block } = {}) {
 }
 
 /**
- * Install the frame transformer in the Control UI's main world.
+ * Install the outbound frame transformer in the Control UI's main world.
  *
  * Electron's isolated preload cannot replace the page world's WebSocket, so
  * main executes this small hook after each gateway document becomes ready.
  * Re-executing updates the config in place instead of stacking another hook.
+ *
+ * Outbound only, deliberately. An earlier revision also rewrote INCOMING frames
+ * to hide the block, which is now the gateway's job because the block carries
+ * the marker above. Rewriting inbound frames here would put a second owner on
+ * that behaviour and would hide the block from this app's users alone.
  */
 function clientScript(config) {
   return `(function() {
     window.__clawDesktopPromptMetadata = ${JSON.stringify(config)};
     if (window.__clawDesktopPromptMetadataInstalled) return;
     window.__clawDesktopPromptMetadataInstalled = true;
+    var header = ${JSON.stringify(CONTEXT_HEADER)};
     var originalSend = WebSocket.prototype.send;
     WebSocket.prototype.send = function(data) {
       try {
@@ -117,7 +140,7 @@ function clientScript(config) {
         if (cfg && cfg.enabled && typeof cfg.block === 'string' && cfg.block && typeof data === 'string' && data.charAt(0) === '{') {
           var payload = JSON.parse(data);
           var message = payload && payload.method === 'chat.send' && payload.params && payload.params.message;
-          if (typeof message === 'string' && message.trim() && !/^\\/\\S/.test(message.trimStart()) && message.indexOf('${BLOCK_START}') === -1) {
+          if (typeof message === 'string' && message.trim() && !/^\\/\\S/.test(message.trimStart()) && message.indexOf(header) === -1) {
             payload.params.message = cfg.block + '\\n\\n' + message;
             data = JSON.stringify(payload);
           }
@@ -125,43 +148,12 @@ function clientScript(config) {
       } catch (error) {}
       return originalSend.call(this, data);
     };
-
-    var originalAddEventListener = WebSocket.prototype.addEventListener;
-    WebSocket.prototype.addEventListener = function(type, listener, options) {
-      if (type === 'message' && typeof listener === 'function') {
-        var originalListener = listener;
-        listener = function(event) {
-          try {
-            if (typeof event.data === 'string' && event.data.indexOf('<claw_desktop_context>') !== -1) {
-              var cleanData = event.data.replace(/<claw_desktop_context>[\\s\\S]*?<\\/claw_desktop_context>(?:\\\\n|\\\\r|\\n|\\r)*/g, '');
-              Object.defineProperty(event, 'data', { value: cleanData });
-            }
-          } catch (e) {}
-          return originalListener.call(this, event);
-        };
-      }
-      return originalAddEventListener.call(this, type, listener, options);
-    };
-
-    var originalMessageSetter = Object.getOwnPropertyDescriptor(WebSocket.prototype, 'onmessage');
-    if (originalMessageSetter) {
-      Object.defineProperty(WebSocket.prototype, 'onmessage', {
-        set: function(listener) {
-          if (typeof listener === 'function') {
-            this.addEventListener('message', listener);
-          } else {
-            originalMessageSetter.set.call(this, listener);
-          }
-        },
-        get: originalMessageSetter.get
-      });
-    }
   })();`;
 }
 
 module.exports = {
-  BLOCK_START,
-  BLOCK_END,
+  CONTEXT_MARKER,
+  CONTEXT_HEADER,
   MAX_VALUE_LENGTH,
   clean,
   formatOs,
