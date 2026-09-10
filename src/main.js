@@ -25,6 +25,7 @@ const noticelog = require('./noticelog');
 const overlay = require('./overlay');
 const profile = require('./profile');
 const progress = require('./progress');
+const promptMetadata = require('./prompt-metadata');
 const quips = require('./quips');
 const updates = require('./updates');
 const secrets = require('./secrets');
@@ -95,6 +96,21 @@ function originOf(url) {
 function activeOrigin() {
   const gw = config.activeGateway();
   return gw ? originOf(gw.url) : null;
+}
+
+function promptMetadataConfig() {
+  return {
+    enabled: config.get().promptMetadata === true,
+    block: promptMetadata.formatBlock(promptMetadata.collectMetadata({
+      appVersion: app.getVersion(),
+    })),
+  };
+}
+
+function installPromptMetadata(wc) {
+  if (!wc || wc.isDestroyed() || originOf(wc.getURL()) !== activeOrigin()) return;
+  wc.executeJavaScript(promptMetadata.clientScript(promptMetadataConfig()), true)
+    .catch((err) => console.warn(`[claw] prompt metadata hook failed: ${err.message}`));
 }
 
 /**
@@ -772,7 +788,10 @@ function createMainWindow() {
   // the host replied; `dom-ready` means the document parsed. Subresources are
   // deliberately not tracked: the bar would then be waiting on fonts.
   wc.on('did-navigate', () => reachMilestone(progress.NAVIGATED));
-  wc.on('dom-ready', () => reachMilestone(progress.DOM));
+  wc.on('dom-ready', () => {
+    reachMilestone(progress.DOM);
+    installPromptMetadata(wc);
+  });
 
   wc.on('did-finish-load', () => {
     wc.setZoomLevel(config.get().zoomLevel || 0);
@@ -1225,7 +1244,7 @@ function noticeLog() {
 }
 
 // A view rather than part of a page, because it has to sit over the *gateway's*
-// page and this app injects nothing into that. Its own WebContents for the same
+// page and this app draws no app UI into that. Its own WebContents for the same
 // reason every other page of ours is one.
 let bannerView = null;
 // What the page says it needs, in CSS pixels. The view is resized to exactly
@@ -2012,6 +2031,7 @@ function currentState() {
       launchAtLogin: cfg.launchAtLogin,
       startHidden: cfg.startHidden,
       autoUpdate: cfg.autoUpdate !== false,
+      promptMetadata: cfg.promptMetadata === true,
     },
     // Why the automatic-updates toggle is unavailable, where it is. A build
     // that could never install one has nothing to switch on, and saying so
@@ -2121,6 +2141,7 @@ function registerIpc() {
     // Takes effect now rather than on the next launch: a preference that needs
     // a restart to mean anything is one the user cannot tell they have set.
     applyUpdatePreference();
+    installPromptMetadata(page());
     buildTray();
     return { ...currentState(), shortcut, login };
   });

@@ -37,7 +37,7 @@ test('both desktop platforms reserve the strip; Linux reserves nothing', () => {
 // once the nav collapses. Five insets, five layout states, five silent misses.
 //
 // A padding rule reappearing here means someone has gone back to guessing.
-test('the app injects nothing into the gateway page', () => {
+test('the chrome module injects no layout into the gateway page', () => {
   for (const name of ['dragCss', 'applyToPage', 'hostClass']) {
     assert.strictEqual(
       chrome[name], undefined,

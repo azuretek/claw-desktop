@@ -4,8 +4,9 @@ A standalone desktop window for the OpenClaw Control UI — its own icon, its ow
 Dock/taskbar entry, a tray icon and a global shortcut. Electron, one codebase,
 builds for macOS, Windows and Linux.
 
-**Viewer only.** It does not run a gateway, does not pair as a node, and has no
-access to the host beyond the window it draws.
+**Viewer only.** It does not run a gateway, pair as a node, or offer remote
+control. An opt-in setting can add a bounded description of this computer to
+chat prompts; it is off by default.
 
 ## Do you actually need this?
 
@@ -132,6 +133,10 @@ otherwise.
   and still tells you a release exists; it just offers to install it rather than
   downloading it unasked. Disabled, with the reason shown, on a build that could
   not install one anyway.
+- **Include this computer's context in prompts** is off by default. When enabled,
+  ordinary chat prompts include the hostname, operating system and architecture,
+  user, home folder, locale, time zone, and Claw Desktop version. It never sends
+  network addresses, environment variables, credentials, or device identifiers.
 - **Global shortcut** — `CommandOrControl+Shift+O` by default, shows or hides
   the window from anywhere. Clear the field to disable.
 - **Certificates** — pinned fingerprints, and anything refused this session
@@ -183,9 +188,9 @@ caption buttons — so snap layouts and tooltips keep working and the window can
 never become unclosable.
 
 The page loads into a view that *starts below* the strip, so nothing it draws
-can land under the buttons, and **the app injects nothing into the gateway page
-at all** — no marker classes, no drag regions, no insets, and so no dependency
-on upstream markup. Linux keeps its normal frame.
+can land under the buttons, and **the app injects no layout or chrome into the
+gateway page**: no marker classes, drag regions, or insets, and so no
+dependency on upstream markup. Linux keeps its normal frame.
 
 Colours are read back off the page rather than assumed, so the caption strip,
 window background and the app's own pages follow whichever Control UI theme is

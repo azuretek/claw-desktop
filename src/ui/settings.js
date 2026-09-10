@@ -431,6 +431,7 @@ function renderPrefs() {
   $('closeToTray').checked = s.closeToTray;
   $('launchAtLogin').checked = s.launchAtLogin;
   $('startHidden').checked = s.startHidden;
+  $('promptMetadata').checked = s.promptMetadata;
   $('globalShortcut').value = s.globalShortcut || '';
 
   // A build that could never install an update has nothing to switch on, so the
@@ -590,6 +591,7 @@ $('save').addEventListener('click', async () => {
     closeToTray: $('closeToTray').checked,
     launchAtLogin: $('launchAtLogin').checked,
     startHidden: $('startHidden').checked,
+    promptMetadata: $('promptMetadata').checked,
     // Never write false just because the checkbox is disabled: a Linux user who
     // once ran the unpacked binary would come back to their AppImage with the
     // preference silently turned off.

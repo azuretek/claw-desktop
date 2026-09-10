@@ -24,6 +24,9 @@ function blank() {
     closeToTray: true,
     launchAtLogin: false,
     startHidden: false,
+    // Opt-in because these facts leave the desktop and become part of each
+    // ordinary chat prompt sent to the configured gateway.
+    promptMetadata: false,
     // Download and offer to install a new version without being asked. True by
     // default because an out-of-date client against a moving gateway is the
     // failure this app is most likely to have, and the update is offered rather
